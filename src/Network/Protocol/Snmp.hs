@@ -37,6 +37,14 @@ instance Enum Request where
     toEnum 8 = (Report        )
     toEnum _ = undefined
 
+instance ASN1Object SnmpVersion where
+    toASN1 Version2 xs = IntVal 0 : xs
+
+instance ASN1Object Request where
+    toASN1 (GetRequest _) xs = (Start $ Container Context 0) : xs
+
+ee oid =  toASN1 Version2 $ toASN1 (GetRequest oid) []
+
 data SnmpVersion = Version1
                  | Version2
                  deriving (Show, Enum, Eq, Ord)
@@ -83,13 +91,6 @@ toB bs = let a = fromASN1 <$> decodeASN1 DER (fromStrict bs)
          in case a of
                  Right (Right (r, _)) -> r
                  _ -> error "bad packet"
-
---         r <- fromASN1 <$> decodeASN1 DER bs
---        case r of
---              Left e -> error e
---              Right g -> return g
-
-
 
 oid :: Snmp -> OID
 oid x = case requestType x of
