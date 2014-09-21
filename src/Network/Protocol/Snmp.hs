@@ -1,4 +1,14 @@
-module Network.Protocol.Snmp where
+{-# LANGUAGE OverloadedStrings #-}
+module Network.Protocol.Snmp 
+( snmp
+, pack
+, unpack
+, SnmpVersion(..)
+, SnmpData(..)
+, Community(..)
+, Request(..)
+)
+where
 
 import Data.ASN1.Parse
 import Data.ASN1.Types
@@ -7,135 +17,166 @@ import Data.ASN1.BinaryEncoding
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (toStrict, fromStrict)
 import Control.Applicative
+import Debug.Trace
 
-data Request = GetRequest OID
-             | GetNextRequest OID
-             | GetResponse Integer Integer [(OID, [ASN1])]
-             | SetRequest OID ASN1
-             | GetBulk Integer Integer OID
+newtype Community = Community ByteString deriving (Show, Eq)
+type RequestId = Integer
+type ErrorStatus = Integer
+type ErrorIndex = Integer
+
+data SnmpVersion = Version1
+                 | Version2
+                 | Version3
+                 deriving (Show, Eq)
+
+data Request = GetRequest RequestId ErrorStatus ErrorIndex 
+             | GetNextRequest RequestId ErrorStatus ErrorIndex 
+             | GetResponse RequestId ErrorStatus ErrorIndex  
+             | SetRequest RequestId ErrorStatus ErrorIndex 
+             | GetBulk RequestId ErrorStatus ErrorIndex 
              | Inform
              | V2Trap
              | Report
              deriving (Show, Eq)
 
-instance Enum Request where
-    fromEnum (GetRequest  _ ) = 0
-    fromEnum (GetNextRequest _ ) = 1
-    fromEnum (GetResponse _ _ _ ) = 2
-    fromEnum (SetRequest _ _) = 3
-    fromEnum (GetBulk _ _ _ ) = 5
-    fromEnum (Inform        ) = 6
-    fromEnum (V2Trap        ) = 7
-    fromEnum (Report        ) = 8
-    toEnum 0 = (GetRequest undefined  )
-    toEnum 1 = (GetNextRequest undefined)
-    toEnum 2 = (GetResponse undefined undefined undefined)
-    toEnum 3 = (SetRequest undefined   undefined)
-    toEnum 5 = (GetBulk undefined undefined   undefined )
-    toEnum 6 = (Inform        )
-    toEnum 7 = (V2Trap        )
-    toEnum 8 = (Report        )
-    toEnum _ = undefined
+data PDU = PDU Request SnmpData deriving (Show, Eq)
+
+data SnmpData = SnmpData [(OID, ASN1)] deriving (Show, Eq)
+
+data SnmpPacket = SnmpPacket SnmpVersion Community PDU deriving (Show, Eq)
 
 instance ASN1Object SnmpVersion where
-    toASN1 Version2 xs = IntVal 0 : xs
+    toASN1 Version1 xs = IntVal 0 : xs
+    toASN1 Version2 xs = IntVal 1 : xs
+    toASN1 Version3 xs = IntVal 2 : xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        IntVal x <- getNext
+        case x of
+             0 -> return Version1
+             1 -> return Version2
+             2 -> return Version3
+             _ -> error "unknown version"
+
+instance ASN1Object Community where
+    toASN1 (Community x) xs = OctetString x : xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        OctetString x <- getNext
+        return $ Community x
 
 instance ASN1Object Request where
-    toASN1 (GetRequest _) xs = (Start $ Container Context 0) : xs
+    toASN1 (GetRequest rid _ _    ) xs = (Start $ Container Context 0):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 0)]
+    toASN1 (GetNextRequest rid _ _) xs = (Start $ Container Context 1):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 1)]
+    toASN1 (GetResponse rid es ei ) xs = (Start $ Container Context 2):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 2)]
+    toASN1 (SetRequest rid _ _    ) xs = (Start $ Container Context 3):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 3)]
+    toASN1 (GetBulk rid es ei     ) xs = (Start $ Container Context 4):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 4)]
+    toASN1 _ _ = error "not inplemented"
+    fromASN1 asn = 
+      case fromASN1Request asn of
+           Left e -> Left e
+           Right (r, _) -> Right r
 
-ee oid =  toASN1 Version2 $ toASN1 (GetRequest oid) []
 
-data SnmpVersion = Version1
-                 | Version2
-                 deriving (Show, Enum, Eq, Ord)
+fromASN1Request :: [ASN1] -> Either String ((Request, [ASN1]), [ASN1])
+fromASN1Request asn = flip runParseASN1State asn $ do
+        Start container <- getNext
+        IntVal rid <- getNext
+        IntVal es <- getNext
+        IntVal ei <- getNext
+        x <- getNextContainer Sequence
+        End container' <- getNext
+        trace (show x ) $ case (container == container', container) of
+             (True, Container Context 0) -> return (GetRequest rid es ei, x)
+             (True, Container Context 1) -> return (GetNextRequest rid es ei, x)
+             (True, Container Context 2) -> return (GetResponse rid es ei, x)
+             (True, Container Context 3) -> return (SetRequest rid es ei, x)
+             (True, Container Context 4) -> return (GetBulk rid es ei, x)
+             _ -> error "not inplemented or bad sequence"
 
-type Community = ByteString
-type RequestId = Integer
+--         trace (show container ++ show rid ++ show es ++ show ei) undefined
 
-data Snmp = Snmp
-  { version :: SnmpVersion
-  , community :: Community
-  , requestType :: Request
-  , requestId :: RequestId
-  } deriving (Show, Eq)
+con :: [ASN1]
+con = [Start $ Container Context 0, IntVal 1, IntVal 0, IntVal 0, Start Sequence, OctetString "hello", End Sequence, End $ Container Context 0]
 
-instance ASN1Object Snmp where
-    toASN1 snmp = \x -> x ++   [ Start Sequence
-                              , IntVal . fromIntegral . fromEnum $ version snmp           -- snmp verion 
-                              , OctetString $ community snmp                              -- community string
-                              , Start $ Container Context $ fromEnum $ requestType snmp   -- Request PDU
-                              , IntVal $ requestId snmp                                   -- Request ID
-                              , IntVal $ makeError snmp                                   -- error
-                              , IntVal $ makeIndexError snmp                              -- error index
-                              , Start Sequence                                      
-                              , Start Sequence 
-                              , OID $ oid snmp                                            -- oid
-                              , snmpData snmp 
-                              , End Sequence
-                              , End Sequence
-                              , End (Container Context $ fromEnum $ requestType snmp)
-                              , End Sequence
-                              ]
-    fromASN1 asn = runParseASN1State snmpParser asn
 
-class SnmpPack a where
+instance ASN1Object SnmpData where
+    toASN1 (SnmpData xs) ys = foldr toA [] xs ++ ys
+      where 
+      toA ::(OID,ASN1) -> [ASN1] -> [ASN1]
+      toA (o, v) zs = [Start Sequence , OID o , v , End Sequence ] ++ zs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        xs <- getMany $ do
+               Start Sequence <- getNext
+               OID x <- getNext
+               v <-  getNext
+               End Sequence <- getNext
+               return (x, v)
+        return $ SnmpData xs
+
+
+instance ASN1Object PDU where
+    toASN1 (PDU r sd) xs = toASN1 r (toASN1 sd []) ++  xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        r <- getObject 
+        sd <- getObject
+        return $ PDU r sd
+
+instance ASN1Object SnmpPacket where
+    toASN1 (SnmpPacket sv c pdu) _ = Start Sequence :( toASN1 sv . toASN1 c . toASN1 pdu $ [End Sequence])
+    fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
+        sv <- getObject
+        c <- getObject
+        pdu <- getObject
+        return $ SnmpPacket sv c pdu
+
+testSnmpPacket :: SnmpPacket
+testSnmpPacket = SnmpPacket Version2 (Community "makeall") testPdu
+
+testPdu :: PDU
+testPdu = PDU (GetRequest 1 1 1) (SnmpData [([1,2,3,4], Null), ([2,3,4], Null)])
+
+testASN1 :: [ASN1]
+testASN1 = [Start Sequence
+           ,IntVal 1,OctetString "makeall"
+           ,Start (Container Context 0)
+             ,IntVal 1
+             ,IntVal 0
+             ,IntVal 0
+             ,Start Sequence
+               ,Start Sequence
+                 ,OID [1,2,3,4]
+                 ,Null
+               ,End Sequence
+               ,Start Sequence
+                 ,OID [2,3,4]
+                 ,Null
+               ,End Sequence
+             ,End Sequence
+           ,End (Container Context 0)
+         ,End Sequence]
+
+
+data Snmp = Snmp 
+  { pack :: SnmpVersion -> Community -> Request -> SnmpData -> ByteString
+  , unpack :: ByteString -> (SnmpVersion, Community, Request, SnmpData)
+  }      
+
+snmp :: Snmp
+snmp = Snmp { pack = \v c r d -> encode (SnmpPacket v c (PDU r d))
+            , unpack = \x -> let SnmpPacket v c (PDU r d) = decode x
+                            in (v, c, r, d)
+            }
+
+class Pack a where
     encode :: a -> ByteString
     decode :: ByteString -> a
 
-instance SnmpPack Snmp where
-    encode snmp = toStrict $ encodeASN1 DER $ toASN1 snmp []
+instance Pack SnmpPacket where
+    encode s = toStrict $ encodeASN1 DER $ toASN1 s []
     decode = toB 
 
-toB :: ByteString -> Snmp
+toB :: ByteString -> SnmpPacket
 toB bs = let a = fromASN1 <$> decodeASN1 DER (fromStrict bs)
          in case a of
                  Right (Right (r, _)) -> r
                  _ -> error "bad packet"
-
-oid :: Snmp -> OID
-oid x = case requestType x of
-             GetRequest y -> y
-             GetNextRequest y -> y
-             SetRequest y _ -> y
-             GetBulk _ _ y -> y
-             _ -> undefined
-
-snmpParser :: ParseASN1 Snmp
-snmpParser = onNextContainer Sequence  allParse
-
-allParse :: ParseASN1 Snmp
-allParse = do
-    IntVal v <-  getNext 
-    OctetString c <- getNext
-    (rt, rid, xs) <- onNextContainer (Container Context (fromEnum $ GetResponse undefined undefined undefined)) parsePDU
-    return $ Snmp (toEnum .fromIntegral $ v) c (rt xs) rid 
-
-parsePDU :: ParseASN1 ([(OID, [ASN1])] -> Request, Integer, [(OID, [ASN1])])
-parsePDU = do
-    IntVal rid <- getNext
-    IntVal e <- getNext
-    IntVal ie <- getNext
-    xs <- onNextContainer Sequence $ getMany $ onNextContainer Sequence $ do
-        OID oid' <- getNext
-        obj <- getMany $ getNext
-        return $ (oid', obj)
-    return (GetResponse e ie, rid, xs) 
-
-
-
-makeError :: Snmp -> Integer
-makeError snmp = case requestType snmp of
-                      GetBulk x _ _ -> x
-                      _ -> 0
-
-makeIndexError :: Snmp -> Integer
-makeIndexError snmp = case requestType snmp of
-                           GetBulk _ x _ -> x
-                           _ -> 0
-
-snmpData :: Snmp -> ASN1
-snmpData snmp = case requestType snmp of
-                     SetRequest _ a -> a
-                     _ -> Null
-
 
