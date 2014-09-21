@@ -1,0 +1,5 @@
+
+get full mibs table
+
+snmptranslate -mALL -Pu -Tso
+snmptranslate -mALL -Pu -Tl

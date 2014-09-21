@@ -19,6 +19,8 @@ eth0 = [1,3,6,1,2,1,2,2,1,2, 1]
 snmpServer :: HostName
 snmpServer = "limbo"
 
+tabl = [31,1,1,1,1]
+
 community = Community "helloall"
 version = Version2
 
@@ -30,7 +32,7 @@ getRequest oid = withSocketsDo $ do
     connect sock (addrAddress serverAddress)
     sendAll sock $ get agent version community 1 oid
     print =<< (result agent <$> recv sock 1500) -- cant be bigger without getting fragmented (see MTU)
-    sendAll sock $ bulk agent version community 2 10 oid
+    sendAll sock $ bulk agent version community 1 10 oid
     print =<< (result agent <$> recv sock 1500) -- cant be bigger without getting fragmented (see MTU)
 
 main = mapM_ (\x -> (getRequest $ root ++ [x])) [1 .. 9]
