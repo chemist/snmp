@@ -11,10 +11,10 @@ import Debug.Trace
 import Prelude hiding (writeFile, readFile)
 import Network.Protocol.Snmp
 
-getEth0 :: [Integer]
-getEth0 = [1,3,6]
+root :: [Integer]
+root = [1,3,6,1,2,1,2,2,1,2]
 
-eth0 = [1,3,6,1,2,1,2,2,1,6]
+eth0 = [1,3,6,1,2,1,2,2,1,2, 1]
 
 snmpServer :: HostName
 snmpServer = "limbo"
@@ -23,12 +23,14 @@ community = Community "helloall"
 version = Version2
 
 
-getRequest :: [Integer] -> IO (SnmpVersion, Community, Request, SnmpData)
+getRequest :: [Integer] -> IO ()
 getRequest oid = withSocketsDo $ do
     serverAddress <- head <$> getAddrInfo (Just defaultHints) (Just snmpServer) (Just "161")
     sock <- socket (addrFamily serverAddress) Datagram defaultProtocol
     connect sock (addrAddress serverAddress)
-    sendAll sock $ pack snmp version community (GetRequest 1 0 0) (SnmpData [(oid, Null)])
-    unpack snmp <$> recv sock 1500 -- cant be bigger without getting fragmented (see MTU)
+    sendAll sock $ get agent version community 1 oid
+    print =<< (result agent <$> recv sock 1500) -- cant be bigger without getting fragmented (see MTU)
+    sendAll sock $ bulk agent version community 2 10 oid
+    print =<< (result agent <$> recv sock 1500) -- cant be bigger without getting fragmented (see MTU)
 
-main = mapM_ (\x -> print =<< (getRequest $ eth0 ++ [x])) [1 .. 9]
+main = mapM_ (\x -> (getRequest $ root ++ [x])) [1 .. 9]

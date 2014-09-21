@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.Protocol.Snmp 
-( snmp
-, pack
-, unpack
+( agent
+, get
+, bulk
+, result
 , SnmpVersion(..)
 , SnmpData(..)
 , Community(..)
@@ -68,7 +69,7 @@ instance ASN1Object Request where
     toASN1 (GetNextRequest rid _ _) xs = (Start $ Container Context 1):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 1)]
     toASN1 (GetResponse rid es ei ) xs = (Start $ Container Context 2):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 2)]
     toASN1 (SetRequest rid _ _    ) xs = (Start $ Container Context 3):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 3)]
-    toASN1 (GetBulk rid es ei     ) xs = (Start $ Container Context 4):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 4)]
+    toASN1 (GetBulk rid es ei     ) xs = (Start $ Container Context 5):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 4)]
     toASN1 _ _ = error "not inplemented"
     fromASN1 asn = 
       case fromASN1Request asn of
@@ -84,12 +85,12 @@ fromASN1Request asn = flip runParseASN1State asn $ do
         IntVal ei <- getNext
         x <- getNextContainer Sequence
         End container' <- getNext
-        trace (show x ) $ case (container == container', container) of
+        case (container == container', container) of
              (True, Container Context 0) -> return (GetRequest rid es ei, x)
              (True, Container Context 1) -> return (GetNextRequest rid es ei, x)
              (True, Container Context 2) -> return (GetResponse rid es ei, x)
              (True, Container Context 3) -> return (SetRequest rid es ei, x)
-             (True, Container Context 4) -> return (GetBulk rid es ei, x)
+             (True, Container Context 5) -> return (GetBulk rid es ei, x)
              _ -> error "not inplemented or bad sequence"
 
 --         trace (show container ++ show rid ++ show es ++ show ei) undefined
@@ -155,16 +156,18 @@ testASN1 = [Start Sequence
          ,End Sequence]
 
 
-data Snmp = Snmp 
-  { pack :: SnmpVersion -> Community -> Request -> SnmpData -> ByteString
-  , unpack :: ByteString -> (SnmpVersion, Community, Request, SnmpData)
+data Snmp = Agent 
+  { get :: SnmpVersion -> Community -> RequestId -> [Integer] -> ByteString
+  , bulk :: SnmpVersion -> Community -> RequestId -> Integer -> [Integer] -> ByteString
+  , result :: ByteString -> (RequestId, SnmpData)
   }      
 
-snmp :: Snmp
-snmp = Snmp { pack = \v c r d -> encode (SnmpPacket v c (PDU r d))
-            , unpack = \x -> let SnmpPacket v c (PDU r d) = decode x
-                            in (v, c, r, d)
-            }
+agent :: Snmp
+agent = Agent { get = \v c r o -> encode (SnmpPacket v c (PDU (GetRequest r 0 0) (SnmpData [(o, Null)])))
+              , bulk = \v c r n o -> encode (SnmpPacket v c (PDU (GetBulk r 0 n) (SnmpData [(o, Null)])))
+              , result = \x -> let SnmpPacket _ _ (PDU (GetResponse r _ _) d) = decode x
+                              in (r, d)
+              }
 
 class Pack a where
     encode :: a -> ByteString
