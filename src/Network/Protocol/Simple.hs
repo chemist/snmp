@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Protocol.Types where
+module Network.Protocol.Simple where
 
 
 import Data.ByteString (ByteString)

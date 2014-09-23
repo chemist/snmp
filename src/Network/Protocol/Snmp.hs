@@ -18,7 +18,7 @@ import Data.ASN1.BinaryEncoding
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (toStrict, fromStrict)
 import Control.Applicative
-import Network.Protocol.Types
+import Network.Protocol.Simple
 import Debug.Trace
 
 newtype Community = Community ByteString deriving (Show, Eq)
