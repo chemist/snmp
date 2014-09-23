@@ -18,6 +18,7 @@ import Data.ASN1.BinaryEncoding
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (toStrict, fromStrict)
 import Control.Applicative
+import Network.Protocol.Types
 import Debug.Trace
 
 newtype Community = Community ByteString deriving (Show, Eq)
@@ -42,7 +43,7 @@ data Request = GetRequest RequestId ErrorStatus ErrorIndex
 
 data PDU = PDU Request SnmpData deriving (Show, Eq)
 
-data SnmpData = SnmpData [(OID, ASN1)] deriving (Show, Eq)
+data SnmpData = SnmpData [(OID, SnmpType)] deriving (Show, Eq)
 
 data SnmpPacket = SnmpPacket SnmpVersion Community PDU deriving (Show, Eq)
 
@@ -102,13 +103,13 @@ con = [Start $ Container Context 0, IntVal 1, IntVal 0, IntVal 0, Start Sequence
 instance ASN1Object SnmpData where
     toASN1 (SnmpData xs) ys = foldr toA [] xs ++ ys
       where 
-      toA ::(OID,ASN1) -> [ASN1] -> [ASN1]
-      toA (o, v) zs = [Start Sequence , OID o , v , End Sequence ] ++ zs
+      toA ::(OID,SnmpType) -> [ASN1] -> [ASN1]
+      toA (o, v) zs = [Start Sequence , OID o] ++ toASN1 v (End Sequence : zs)
     fromASN1 asn = flip runParseASN1State asn $ do
         xs <- getMany $ do
                Start Sequence <- getNext
                OID x <- getNext
-               v <-  getNext
+               v <-  getObject
                End Sequence <- getNext
                return (x, v)
         return $ SnmpData xs
@@ -133,7 +134,7 @@ testSnmpPacket :: SnmpPacket
 testSnmpPacket = SnmpPacket Version2 (Community "makeall") testPdu
 
 testPdu :: PDU
-testPdu = PDU (GetRequest 1 1 1) (SnmpData [([1,2,3,4], Null), ([2,3,4], Null)])
+testPdu = PDU (GetRequest 1 1 1) (SnmpData [([1,2,3,4], Simple Null), ([2,3,4], Simple Null)])
 
 testASN1 :: [ASN1]
 testASN1 = [Start Sequence
@@ -163,8 +164,8 @@ data Snmp = Agent
   }      
 
 agent :: Snmp
-agent = Agent { get = \v c r o -> encode (SnmpPacket v c (PDU (GetRequest r 0 0) (SnmpData [(o, Null)])))
-              , bulk = \v c r n o -> encode (SnmpPacket v c (PDU (GetBulk r 0 n) (SnmpData [(o, Null)])))
+agent = Agent { get = \v c r o -> encode (SnmpPacket v c (PDU (GetRequest r 0 0) (SnmpData [(o, Simple Null)])))
+              , bulk = \v c r n o -> encode (SnmpPacket v c (PDU (GetBulk r 0 n) (SnmpData [(o, Simple Null)])))
               , result = \x -> let SnmpPacket _ _ (PDU (GetResponse r _ _) d) = decode x
                               in (r, d)
               }
