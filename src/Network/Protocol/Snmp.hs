@@ -134,7 +134,7 @@ testSnmpPacket :: SnmpPacket
 testSnmpPacket = SnmpPacket Version2 (Community "makeall") testPdu
 
 testPdu :: PDU
-testPdu = PDU (GetRequest 1 1 1) (SnmpData [([1,2,3,4], Simple Null), ([2,3,4], Simple Null)])
+testPdu = PDU (GetRequest 1 1 1) (SnmpData [([1,2,3,4], Zero), ([2,3,4], Zero)])
 
 testASN1 :: [ASN1]
 testASN1 = [Start Sequence
@@ -164,8 +164,8 @@ data Snmp = Agent
   }      
 
 agent :: Snmp
-agent = Agent { get = \v c r o -> encode (SnmpPacket v c (PDU (GetRequest r 0 0) (SnmpData [(o, Simple Null)])))
-              , bulk = \v c r n o -> encode (SnmpPacket v c (PDU (GetBulk r 0 n) (SnmpData [(o, Simple Null)])))
+agent = Agent { get = \v c r o -> encode (SnmpPacket v c (PDU (GetRequest r 0 0) (SnmpData [(o, Zero)])))
+              , bulk = \v c r n o -> encode (SnmpPacket v c (PDU (GetBulk r 0 n) (SnmpData [(o, Zero)])))
               , result = \x -> let SnmpPacket _ _ (PDU (GetResponse r _ _) d) = decode x
                               in (r, d)
               }

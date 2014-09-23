@@ -8,12 +8,10 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
 import Control.Applicative
 import Data.Maybe
-import Data.ASN1.Types
-import Debug.Trace
 import Prelude hiding (writeFile, readFile)
 import Network.Protocol.Snmp
-import Data.Word
-import Data.Bits
+
+import Debug.Trace
 
 root :: [Integer]
 root = [1,3,6,1,2,1,2,2,1,2]
