@@ -116,25 +116,19 @@ client Config{..} = do
                 first <- get' [oids]
                 next <- getnext' [oids]
                 case (first, next) of
-                     (SnmpData [(_, NoSuchObject)], SnmpData [(nextOid, _)]) -> walk' nextOid base accumulator
-                     (SnmpData [(_, NoSuchInstance)], SnmpData [(nextOid, _)]) -> walk' nextOid base accumulator
+                     (SnmpData [(_, NoSuchObject)], SnmpData [(nextOid, _)]) -> walk' nextOid base next
+                     (SnmpData [(_, NoSuchInstance)], SnmpData [(nextOid, _)]) -> walk' nextOid base next
                      (SnmpData [(_, EndOfMibView)], _) -> return accumulator
                      (_, SnmpData [(nextOid, _)]) -> walk' nextOid base first
             | otherwise = do
-                rid <- succRequestId ref
-                sendAll socket $ encode (SnmpPacket version community (PDU (GetNextRequest rid 0 0) (SnmpData [(oids, Zero)])))
-                result <- race (threadDelay timeout) (decode <$> recv socket 1500)
-                case result of
-                  Right (SnmpPacket _ _ (PDU (GetResponse rid e ie) d)) -> do
-                    when (e /= 0) $ throwIO $ ServerException e
-                    let SnmpData [(next, v)] = d
-                    case (isUpLevel next base, v) of
-                         (True, _) -> return accumulator
-                         (_, NoSuchObject) -> walk' next base accumulator
-                         (_, NoSuchInstance) -> walk' next base accumulator
-                         (_, EndOfMibView) -> return accumulator
-                         (_, _) -> walk' next base (accumulator <> d) 
-                  Left _ -> throwIO TimeoutException            
+                nextData <- getnext' [oids]
+                let SnmpData [(next, v)] = nextData
+                case (isUpLevel next base, v) of
+                     (True, _) -> return accumulator
+                     (_, NoSuchObject) -> walk' next base accumulator
+                     (_, NoSuchInstance) -> walk' next base accumulator
+                     (_, EndOfMibView) -> return accumulator
+                     (_, _) -> walk' next base (accumulator <> nextData) 
     return $ Client 
         { get = get'
         , bulkget = bulkget'

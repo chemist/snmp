@@ -35,14 +35,12 @@ main = bracket (client conf)
        where
          requests :: Client -> IO ()
          requests snmp = do
-             print "only sysUptime"
-             putStr . show =<< walk snmp [oidFromBS sysUptime]
-             print "memory"
+             print "get request"
+             putStr . show =<< get snmp [oidFromBS sysUptime, oidFromBS oi, zeroDotZero]
+             print "bulkget request"
+             putStr . show =<< bulkget snmp [oidFromBS sysUptime]
+             print "getnext request"
+             putStr . show =<< getnext snmp [oidFromBS sysUptime]
+             print "walk memory"
              putStr . show =<< walk snmp [oidFromBS memory]
---             print "get request"
---             putStr . show =<< get snmp [sysUptime, oidFromBS oi, zeroDotZero, sysUptime]
---             print "bulkget request"
---             putStr . show =<< bulkget snmp [sysUptime]
---             print "getnext request"
---             putStr . show =<< getnext snmp [sysUptime]
 
