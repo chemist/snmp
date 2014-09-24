@@ -20,6 +20,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (toStrict, fromStrict)
 import Control.Applicative
 import Network.Protocol.Simple
+import Data.Monoid
 import Debug.Trace
 
 newtype Community = Community ByteString deriving (Show, Eq)
@@ -45,6 +46,10 @@ data Request = GetRequest RequestId ErrorStatus ErrorIndex
 data PDU = PDU Request SnmpData deriving (Show, Eq)
 
 data SnmpData = SnmpData [(OID, SnmpType)] deriving (Eq)
+
+instance Monoid SnmpData where
+    mempty = SnmpData []
+    mappend (SnmpData xs) (SnmpData ys) = SnmpData $ xs <> ys
 
 instance Show SnmpData where
     show (SnmpData xs) = unlines $ map (\(oid, snmptype) -> oidToString oid ++ " = " ++ show snmptype) xs
