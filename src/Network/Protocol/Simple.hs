@@ -23,10 +23,14 @@ data SnmpType = Simple ASN1
               | Counter64 Integer
               | ZeroDotZero
               | NoSuchInstance
+              | NoSuchObject
+              | EndOfMibView
               deriving (Show, Eq)
 
 instance ASN1Object SnmpType where
+    toASN1 NoSuchObject xs = Other Context 0 "" : xs
     toASN1 NoSuchInstance xs = Other Context 1 "" : xs
+    toASN1 EndOfMibView xs = Other Context 2 "" : xs
     toASN1 (Simple x) xs = x : xs
     toASN1 Zero xs = Null : xs
     toASN1 ZeroDotZero xs = OID [0,0] : xs
@@ -40,7 +44,9 @@ instance ASN1Object SnmpType where
     toASN1 (Counter64 x) xs = Other Application 6 (packInteger x) : xs
     fromASN1 asn = flip runParseASN1State asn (unp =<< getNext)
       where
+      unp (Other Context 0 "") = return NoSuchObject
       unp (Other Context 1 "") = return NoSuchInstance
+      unp (Other Context 2 "") = return EndOfMibView
       unp Null = return Zero
       unp (OID [0,0]) = return ZeroDotZero
       unp (IntVal x) = return $ Integer x
