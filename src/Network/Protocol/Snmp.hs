@@ -1,13 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.Protocol.Snmp 
-( agent
-, get
-, bulk
-, result
-, SnmpVersion(..)
+( SnmpVersion(..)
 , SnmpData(..)
 , Community(..)
 , Request(..)
+, PDU(..)
+, RequestId
+, SnmpPacket(..)
+, encode
+, decode
 )
 where
 
@@ -43,7 +44,13 @@ data Request = GetRequest RequestId ErrorStatus ErrorIndex
 
 data PDU = PDU Request SnmpData deriving (Show, Eq)
 
-data SnmpData = SnmpData [(OID, SnmpType)] deriving (Show, Eq)
+data SnmpData = SnmpData [(OID, SnmpType)] deriving (Eq)
+
+instance Show SnmpData where
+    show (SnmpData xs) = unlines $ map (\(oid, snmptype) -> oidToString oid ++ " = " ++ show snmptype) xs
+
+oidToString :: OID -> String
+oidToString xs = foldr1 (\x y -> x ++ "." ++ y) $ map show xs
 
 data SnmpPacket = SnmpPacket SnmpVersion Community PDU deriving (Show, Eq)
 
@@ -94,12 +101,6 @@ fromASN1Request asn = flip runParseASN1State asn $ do
              (True, Container Context 5) -> return (GetBulk rid es ei, x)
              _ -> error "not inplemented or bad sequence"
 
---         trace (show container ++ show rid ++ show es ++ show ei) undefined
-
-con :: [ASN1]
-con = [Start $ Container Context 0, IntVal 1, IntVal 0, IntVal 0, Start Sequence, OctetString "hello", End Sequence, End $ Container Context 0]
-
-
 instance ASN1Object SnmpData where
     toASN1 (SnmpData xs) ys = foldr toA [] xs ++ ys
       where 
@@ -129,46 +130,6 @@ instance ASN1Object SnmpPacket where
         c <- getObject
         pdu <- getObject
         return $ SnmpPacket sv c pdu
-
-testSnmpPacket :: SnmpPacket
-testSnmpPacket = SnmpPacket Version2 (Community "makeall") testPdu
-
-testPdu :: PDU
-testPdu = PDU (GetRequest 1 1 1) (SnmpData [([1,2,3,4], Zero), ([2,3,4], Zero)])
-
-testASN1 :: [ASN1]
-testASN1 = [Start Sequence
-           ,IntVal 1,OctetString "makeall"
-           ,Start (Container Context 0)
-             ,IntVal 1
-             ,IntVal 0
-             ,IntVal 0
-             ,Start Sequence
-               ,Start Sequence
-                 ,OID [1,2,3,4]
-                 ,Null
-               ,End Sequence
-               ,Start Sequence
-                 ,OID [2,3,4]
-                 ,Null
-               ,End Sequence
-             ,End Sequence
-           ,End (Container Context 0)
-         ,End Sequence]
-
-
-data Snmp = Agent 
-  { get :: SnmpVersion -> Community -> RequestId -> [Integer] -> ByteString
-  , bulk :: SnmpVersion -> Community -> RequestId -> Integer -> [Integer] -> ByteString
-  , result :: ByteString -> (RequestId, SnmpData)
-  }      
-
-agent :: Snmp
-agent = Agent { get = \v c r o -> encode (SnmpPacket v c (PDU (GetRequest r 0 0) (SnmpData [(o, Zero)])))
-              , bulk = \v c r n o -> encode (SnmpPacket v c (PDU (GetBulk r 0 n) (SnmpData [(o, Zero)])))
-              , result = \x -> let SnmpPacket _ _ (PDU (GetResponse r _ _) d) = decode x
-                              in (r, d)
-              }
 
 class Pack a where
     encode :: a -> ByteString

@@ -1,5 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Protocol.Simple where
+module Network.Protocol.Simple 
+( SnmpType(..)
+, OID(..)
+)
+where
 
 
 import Data.ByteString (ByteString)
