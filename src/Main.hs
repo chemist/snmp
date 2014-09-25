@@ -21,11 +21,14 @@ ipAddr = [1,3,6,1,2,1,4,22,1,3,3,192,168,3,1]
 
 zeroDotZero = [1,3,6,1,2,1,2,2,1,22,20]
 
+sysContact = "1.3.6.1.2.1.1.4.0"
+bad = "1.4.6.1.2.1.1.4"
+
 oi :: ByteString
 oi = ".1.3.6.1.2.1.1.9.1.2.1"
 
 conf = defConfig { hostname = "salt"
-                 , community = Community "helloall"
+                 , community = Community "helloallrw"
                  , port = "161"
                  }
 
@@ -43,4 +46,12 @@ main = bracket (client conf)
              putStr . show =<< getnext snmp [oidFromBS sysUptime]
              print "walk memory"
              putStr . show =<< walk snmp [oidFromBS memory]
+             print "bulkwalk memory"
+             putStr . show =<< bulkwalk snmp [oidFromBS memory]
+             print "get sysContact"
+             putStr . show =<< get snmp [oidFromBS sysContact]
+             print "set sysContact"
+             putStr . show =<< set snmp (SnmpData [(oidFromBS sysContact, String "hello all")])
+             print "get sysContact"
+             putStr . show =<< get snmp [oidFromBS sysContact]
 

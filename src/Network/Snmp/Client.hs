@@ -13,9 +13,13 @@ module Network.Snmp.Client
 , bulkget
 , getnext
 , walk
+, bulkwalk
+, set
 , close
 , Config(..)
 , defConfig
+, SnmpData(..)
+, SnmpType(String, Integer, IpAddress, Counter32, Gaude32, TimeTicks, Opaque, Counter64, ZeroDotZero, Zero)
 )
 where
 
@@ -72,6 +76,8 @@ data Client = Client
   , bulkget :: OIDS -> IO SnmpData 
   , getnext :: OIDS -> IO SnmpData
   , walk :: OIDS -> IO SnmpData
+  , bulkwalk :: OIDS -> IO SnmpData
+  , set :: SnmpData -> IO SnmpData
   , close :: IO ()
   }
 
@@ -80,7 +86,19 @@ succRequestId ref = atomicModifyIORef' ref  (\x -> (succ x, succ x))
 
 data ClientException = TimeoutException 
                      | ServerException Integer
-                     deriving (Typeable, Show, Eq)
+                     deriving (Typeable, Eq)
+
+instance Show ClientException where
+    show (ServerException 6) = "No Access"
+    show TimeoutException = "Timeout exception"
+    show (ServerException 1) = "The value/response is too big"
+    show (ServerException 2) = "There is no such SNMP object"
+    show (ServerException 3) = "Bad value for the SNMP object"
+    show (ServerException 4) = "The SNMP object is read only"
+    show (ServerException 5) = "General SNMP error"
+    show (ServerException 80) = "General IO failure occured on the set request"
+    show (ServerException 81) = "General SNMP timeout occured"
+    show (ServerException x) = "Exception " ++ show x
 
 instance Exception ClientException
 
@@ -129,13 +147,31 @@ client Config{..} = do
                      (_, NoSuchInstance) -> walk' next base accumulator
                      (_, EndOfMibView) -> return accumulator
                      (_, _) -> walk' next base (accumulator <> nextData) 
+        bulkwalk' oids base accumulator = do
+               first <- bulkget' [oids]
+               let (next, snmpData) = lastS first
+                   filtered (SnmpData xs) = SnmpData $ filter (\(x,_) -> not $ isUpLevel x base) xs
+               case (isUpLevel next base , snmpData) of
+                    (_, EndOfMibView) -> return $ accumulator <> filtered first
+                    (False, _) -> bulkwalk' next base (accumulator <> first)
+                    (True, _) -> return $ accumulator <> filtered first
+        set' oids = withSocketsDo $ do
+            rid <- succRequestId ref
+            sendAll socket $ encode (SnmpPacket version community (PDU (SetRequest rid 0 0) oids))
+            returnResult
+
     return $ Client 
         { get = get'
         , bulkget = bulkget'
         , getnext = getnext'
         , walk = \oids -> mconcat <$> mapM (\oi -> withSocketsDo $ walk' oi oi mempty) oids
+        , bulkwalk = \oids -> mconcat <$> mapM (\oi -> withSocketsDo $ bulkwalk' oi oi mempty) oids
+        , set = set' 
         , close = trace "close socket" $ NS.close socket
         } 
+
+lastS :: SnmpData -> (OID, SnmpType)
+lastS (SnmpData xs) = last xs
 
 isUpLevel :: OID -> OID -> Bool
 isUpLevel new old = let baseLength = length old
