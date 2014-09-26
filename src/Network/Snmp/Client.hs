@@ -8,7 +8,7 @@ module Network.Snmp.Client
 , Port
 , oidFromBS
 , Community(..)
-, SnmpVersion(..)
+, Version(..)
 , get
 , bulkget
 , getnext
@@ -61,7 +61,7 @@ data Config = Config
   { hostname :: Hostname
   , port :: Port
   , community :: Community
-  , version :: SnmpVersion
+  , version :: Version
   , timeout :: Int
   } deriving (Show, Eq)
 
@@ -121,24 +121,24 @@ client Config{..} = do
     let returnResult = do
             result <- race (threadDelay timeout) (decode <$> recv socket 1500)
             case result of
-                 Right (SnmpPacket _ _ (PDU (GetResponse rid e ie) d)) -> do
+                 Right (SnmpPacket _ (PDU (GetResponse rid e ie) d)) -> do
                      when (e /= 0) $ throwIO $ ServerException e
                      return d
                  Left _ -> throwIO TimeoutException            
 
         get' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket version community (PDU (GetRequest rid 0 0) (SnmpData $ map (\x -> (x, Zero)) oids)))
+            sendAll socket $ encode (SnmpPacket (Header version Nothing (Just community)) (PDU (GetRequest rid 0 0) (SnmpData $ map (\x -> (x, Zero)) oids)))
             returnResult
 
         bulkget' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket version community (PDU (GetBulk rid 0 10) (SnmpData $ map (\x -> (x, Zero)) oids)))
+            sendAll socket $ encode (SnmpPacket (Header version Nothing (Just community)) (PDU (GetBulk rid 0 10) (SnmpData $ map (\x -> (x, Zero)) oids)))
             returnResult
 
         getnext' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket version community (PDU (GetNextRequest rid 0 0) (SnmpData $ map (\x -> (x, Zero)) oids)))
+            sendAll socket $ encode (SnmpPacket (Header version Nothing (Just community)) (PDU (GetNextRequest rid 0 0) (SnmpData $ map (\x -> (x, Zero)) oids)))
             returnResult
 
         walk' oids base accumulator 
@@ -169,7 +169,7 @@ client Config{..} = do
                     (True, _) -> return $ accumulator <> filtered first
         set' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket version community (PDU (SetRequest rid 0 0) oids))
+            sendAll socket $ encode (SnmpPacket (Header version Nothing (Just community)) (PDU (SetRequest rid 0 0) oids))
             returnResult
 
     return $ Client 
