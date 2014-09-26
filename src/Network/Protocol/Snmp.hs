@@ -57,18 +57,39 @@ instance Show SnmpData where
 oidToString :: OID -> String
 oidToString xs = foldr1 (\x y -> x ++ "." ++ y) $ map show xs
 
-data SnmpPacket = SnmpPacket SnmpVersion Community PDU deriving (Show, Eq)
+data SnmpPacket = SnmpPacket SnmpVersion Community PDU 
+                | SnmpPacketV3 SnmpVersion MessageID MsgMaxSize MsgFlag MsgFlag MsgSecurityModel MsgSecurityParameter ScopedPDU
+                deriving (Show, Eq)
+
+-- Message Identifier (like RequestId in PDU)
+newtype MessageID = MessageID Integer deriving (Show, Eq)
+
+-- Message max size must be > 484
+newtype MsgMaxSize = MsgMaxSize Integer deriving (Show, Eq)
+
+newtype MsgFlag = MsgFlag ByteString deriving (Show, Eq)
+
+newtype MsgSecurityModel = MsgSecurityModel Integer deriving (Show, Eq)
+
+data MsgSecurityParameter = MsgSecurityParameter deriving (Show, Eq)
+
+data ScopedPDU = ScopedPDU deriving (Show, Eq)
+
+
+
+
+
 
 instance ASN1Object SnmpVersion where
     toASN1 Version1 xs = IntVal 0 : xs
     toASN1 Version2 xs = IntVal 1 : xs
-    toASN1 Version3 xs = IntVal 2 : xs
+    toASN1 Version3 xs = IntVal 3 : xs
     fromASN1 asn = flip runParseASN1State asn $ do
         IntVal x <- getNext
         case x of
              0 -> return Version1
              1 -> return Version2
-             2 -> return Version3
+             3 -> return Version3
              _ -> error "unknown version"
 
 instance ASN1Object Community where

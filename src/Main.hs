@@ -30,6 +30,7 @@ oi = ".1.3.6.1.2.1.1.9.1.2.1"
 conf = defConfig { hostname = "salt"
                  , community = Community "helloallrw"
                  , port = "161"
+                 , version = Version2
                  }
 
 main = bracket (client conf)
