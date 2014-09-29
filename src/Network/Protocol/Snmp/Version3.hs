@@ -122,7 +122,7 @@ data ScopedPDU = ScopedPDU ContextEngineID ContextName PDU deriving (Show, Eq)
 
 instance ASN1Object ScopedPDU where
     toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs = 
-      [Start Sequence, OctetString x, OctetString y] ++ (toASN1 pdu xs)
+      [Start Sequence, OctetString x, OctetString y] ++ (toASN1 pdu (End Sequence :xs))
     fromASN1 asn = flip runParseASN1State asn $ do
         Start Sequence <- getNext
         OctetString x <- getNext

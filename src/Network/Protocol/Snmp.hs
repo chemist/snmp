@@ -17,16 +17,19 @@ module Network.Protocol.Snmp
 , Community(..)
 -- * Third version
 , Context(..)
+, ContextEngineID(..)
+, ContextName(..)
 , ScopedPDU(..)
+, MsgID(..)
+, MsgFlag(..)
+, MsgMaxSize(..)
+, MsgSecurityModel(..)
+, MsgSecurityParameter(..)
+, Reportable(..)
+, PrivAuth(..)
 -- * aliases
 , V2Packet
 , V3Packet
-, Hostname
-, Port
--- * client types
-, Config(..) 
-, Client(..)
-, sec
 , OIDS
 ) 
 where
@@ -39,38 +42,5 @@ type V2Packet = SnmpPacket (Header Community) PDU
 type V3Packet = SnmpPacket (Header Context) ScopedPDU
 
 type OIDS = [OID]
-
-type Hostname = String
-type Port = String
-type Login = String
-type Password = String
-
-data Config = ConfigV2
-  { hostname :: Hostname
-  , port :: Port
-  , timeout :: Int
-  , community :: Community
-  }         | ConfigV3
-  { hostname :: Hostname
-  , port :: Port
-  , timeout :: Int
-  , login :: Login
-  , password :: Password
-  }
-  deriving (Show, Eq)
-
-sec :: Int -> Int
-sec = (* 1000000)
-
-data Client = Client 
-  { get :: OIDS -> IO Suite
-  , bulkget :: OIDS -> IO Suite 
-  , getnext :: OIDS -> IO Suite
-  , walk :: OIDS -> IO Suite
-  , bulkwalk :: OIDS -> IO Suite
-  , set :: Suite -> IO Suite
-  , close :: IO ()
-  }
-
 
 
