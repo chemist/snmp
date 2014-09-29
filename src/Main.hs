@@ -27,11 +27,10 @@ bad = "1.4.6.1.2.1.1.4"
 oi :: ByteString
 oi = ".1.3.6.1.2.1.1.9.1.2.1"
 
-conf = defConfig { hostname = "salt"
-                 , community = Community "helloallrw"
-                 , port = "161"
-                 , version = Version2
-                 }
+conf :: Config
+conf = (defConfig Version2) { hostname = "salt" 
+                            , community = Community "helloallrw"
+                            } 
 
 main = bracket (client conf)
                close

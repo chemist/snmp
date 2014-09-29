@@ -17,10 +17,10 @@ module Network.Snmp.Client
 , set
 , close
 , Config(..)
-, defConfig
 , Coupla(..)
 , Suite(..)
 , Value(String, Integer, IpAddress, Counter32, Gaude32, TimeTicks, Opaque, Counter64, ZeroDotZero, Zero)
+, defConfig
 )
 where
 
@@ -42,11 +42,12 @@ import Control.Monad (when)
 import Data.Monoid
 import Debug.Trace
 
+defConfig Version1 = ConfigV2 "localhost" "161" (sec 5) (Community "public") 
+defConfig Version2 = ConfigV2 "localhost" "161" (sec 5) (Community "public")
+defConfig Version3 = undefined
+
 oidFromBS :: ByteString -> [Integer]
 oidFromBS xs = catMaybes $ map (\x -> fst <$> C.readInteger x) $ C.splitWith (== '.') xs
-
-type Hostname = String
-type Port = String
 
 makeSocket :: Hostname -> Port -> IO Socket
 makeSocket hostname port = do
@@ -55,61 +56,37 @@ makeSocket hostname port = do
     connect sock (addrAddress serverAddress)
     return sock
 
-type OIDS = [OID]
-
-data Config = Config 
-  { hostname :: Hostname
-  , port :: Port
-  , community :: Community
-  , version :: Version
-  , timeout :: Int
-  } deriving (Show, Eq)
-
-sec :: Int -> Int
-sec = (* 1000000)
-
-defConfig :: Config
-defConfig = Config "localhost" "161" (Community "public") Version2 (sec 5)
-
-data Client = Client 
-  { get :: OIDS -> IO Suite
-  , bulkget :: OIDS -> IO Suite 
-  , getnext :: OIDS -> IO Suite
-  , walk :: OIDS -> IO Suite
-  , bulkwalk :: OIDS -> IO Suite
-  , set :: Suite -> IO Suite
-  , close :: IO ()
-  }
-
 succRequestId :: IORef Integer -> IO Integer
 succRequestId ref = atomicModifyIORef' ref  (\x -> (succ x, succ x))
 
+returnResult2 :: NS.Socket -> Int -> IO Suite
+returnResult2 socket timeout = do
+    result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO V2Packet)
+    case result of
+         Right (SnmpPacket _ (PDU (GetResponse rid e ie) d)) -> do
+             when (e /= 0) $ throwIO $ ServerException e
+             return d
+         Left _ -> throwIO TimeoutException            
+
 client :: Config -> IO Client
-client Config{..} = do
+client ConfigV2{..} = do
     socket <- trace "open socket" $ makeSocket hostname port 
     ref <- trace "init rid" $ newIORef 0
-    let returnResult = do
-            result <- race (threadDelay timeout) (decode <$> recv socket 1500)
-            case result of
-                 Right (SnmpPacket (Header Version2 (Community _)) (PDU (GetResponse rid e ie) d)) -> do
-                     when (e /= 0) $ throwIO $ ServerException e
-                     return d
-                 Left _ -> throwIO TimeoutException            
-
+    let 
         get' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket (Header version community) (PDU (GetRequest rid 0 0) (Suite $ map (\x -> Coupla x Zero) oids)))
-            returnResult
+            sendAll socket $ encode (SnmpPacket (Header Version2 community) (PDU (GetRequest rid 0 0) (Suite $ map (\x -> Coupla x Zero) oids)))
+            returnResult2 socket timeout
 
         bulkget' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket (Header version community) (PDU (GetBulk rid 0 10) (Suite $ map (\x -> Coupla x Zero) oids)))
-            returnResult
+            sendAll socket $ encode (SnmpPacket (Header Version2 community) (PDU (GetBulk rid 0 10) (Suite $ map (\x -> Coupla x Zero) oids)))
+            returnResult2 socket timeout
 
         getnext' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket (Header version community) (PDU (GetNextRequest rid 0 0) (Suite $ map (\x -> Coupla x Zero) oids)))
-            returnResult
+            sendAll socket $ encode (SnmpPacket (Header Version2 community) (PDU (GetNextRequest rid 0 0) (Suite $ map (\x -> Coupla x Zero) oids)))
+            returnResult2 socket timeout
 
         walk' oids base accumulator 
             | oids == base = do
@@ -139,8 +116,8 @@ client Config{..} = do
                     (True, _) -> return $ accumulator <> filtered first
         set' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket (Header version community) (PDU (SetRequest rid 0 0) oids))
-            returnResult
+            sendAll socket $ encode (SnmpPacket (Header Version2 community) (PDU (SetRequest rid 0 0) oids))
+            returnResult2 socket timeout
 
     return $ Client 
         { get = get'
