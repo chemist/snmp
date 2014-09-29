@@ -52,7 +52,7 @@ main = bracket (client conf)
              print "get sysContact"
              putStr . show =<< get snmp [oidFromBS sysContact]
              print "set sysContact"
-             putStr . show =<< set snmp (SnmpData [(oidFromBS sysContact, String "hello all")])
+             putStr . show =<< set snmp (Suite [Coupla (oidFromBS sysContact) (String "hello all")])
              print "get sysContact"
              putStr . show =<< get snmp [oidFromBS sysContact]
 
