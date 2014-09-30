@@ -95,7 +95,10 @@ data Version = Version1
              | Version3
              deriving (Eq, Show)
 
-data Header a = Header Version a deriving (Eq, Show)
+data Header a = Header Version a deriving (Eq)
+
+instance Show a => Show (Header a) where
+    show (Header v a) = "\n  version: " ++ show v ++ "\n  " ++ show a
 
 instance ASN1Object a => ASN1Object (Header a) where
     toASN1 (Header Version1 x) xs = IntVal 0 : toASN1 x xs
@@ -108,7 +111,10 @@ instance ASN1Object a => ASN1Object (Header a) where
              1 -> Header Version2 <$> getObject
              3 -> Header Version3 <$> getObject
 
-data SnmpPacket a b = SnmpPacket a b deriving (Show, Eq)
+data SnmpPacket a b = SnmpPacket a b deriving (Eq)
+
+instance (Show a, Show b) => Show (SnmpPacket a b) where
+    show (SnmpPacket a b) = "snmp packet: \n  header: " ++ show a ++ "\n  pdu: " ++ show b
 
 instance (ASN1Object a, ASN1Object b, Show b, Show a) => ASN1Object (SnmpPacket a b) where
     toASN1 (SnmpPacket header pdu) _ = 

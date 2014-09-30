@@ -13,6 +13,7 @@ module Network.Snmp.Client
 , Config(..)
 , Coupla(..)
 , Suite(..)
+, PrivAuth(..)
 , Value(String, Integer, IpAddress, Counter32, Gaude32, TimeTicks, Opaque, Counter64, ZeroDotZero, Zero)
 -- * client 
 , client
@@ -38,4 +39,4 @@ import Network.Snmp.Client.Version3
 
 client :: Config -> IO Client
 client ConfigV2{..} = clientV2 hostname port timeout community
-client ConfigV3{..} = clientV3 hostname port timeout login password
+client ConfigV3{..} = clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType

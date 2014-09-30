@@ -2,9 +2,10 @@
 module Main where
 
 import Data.ByteString (ByteString)
-import Network.Snmp.Client
 import Control.Exception (bracket)
 import Debug.Trace
+
+import Network.Snmp.Client
 
 root :: [Integer]
 root = [1,3,6,1,2,1,2,2,1,2]
@@ -31,13 +32,17 @@ main = client3
 
 conf2 :: Config
 conf2 = (defConfig Version2) { hostname = "salt" 
-                             , community = Community "helloallrw"
+                             , community = Community "helloall"
                              } 
 conf3 :: Config
 conf3 = (defConfig Version3) { hostname = "salt" 
-                             , login = "chemist"
-                             , password = "helloallrw"
+                             , sequrityName = "chemist"
+                             , authPass = "helloall"
+                             , privPass = "helloall"
+                             , sequrityLevel = AuthNoPriv
                              } 
+
+-- clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
 
 client3 = bracket (client conf3)
                   close

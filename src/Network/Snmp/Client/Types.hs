@@ -19,10 +19,18 @@ data Config = ConfigV2
   { hostname :: Hostname
   , port :: Port
   , timeout :: Int
-  , login :: Login
-  , password :: Password
+  , sequrityName :: Login
+  , authPass :: Password
+  , privPass :: Password
+  , sequrityLevel :: PrivAuth
+  , context :: ByteString
+  , authType :: AuthType
+  , privType :: PrivType
   }
   deriving (Show, Eq)
+
+data AuthType = MD5 | SHA deriving (Show, Eq)
+data PrivType = DES | AES deriving (Show, Eq)
 
 sec :: Int -> Int
 sec = (* 1000000)
@@ -39,5 +47,17 @@ data Client = Client
 
 defConfig Version1 = ConfigV2 "localhost" "161" (sec 5) (Community "public") 
 defConfig Version2 = ConfigV2 "localhost" "161" (sec 5) (Community "public")
-defConfig Version3 = ConfigV3 "localhost" "161" (sec 5) "guest" "readonly"
+defConfig Version3 = ConfigV3 
+  { hostname = "localhost" 
+  , port = "161" 
+  , timeout = (sec 5) 
+  , sequrityName = "guest" 
+  , authPass = "readonly"
+  , privPass = "readonly"
+  , sequrityLevel = AuthNoPriv
+  , context = ""
+  , authType = MD5
+  , privType = DES
+  }
+
 

@@ -26,17 +26,15 @@ import Network.Protocol.Snmp
 import Network.Snmp.Client.Types
 import Network.Snmp.Client.Internal 
 
--- 1412068909
-
-clientV3 :: Hostname -> Port -> Int -> Login -> Password -> IO Client
-clientV3 hostname port timeout login password = do
+clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> ByteString -> AuthType -> PrivType -> IO Client
+clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
     socket <- trace "open socket" $ makeSocket hostname port 
     ref <- trace "init rid" $ newIORef 0
     let 
-        context = Context (MsgID 1062299988) (MsgMaxSize 65507) (MsgFlag False AuthNoPriv) UserBasedSecurityModel $
+        contextP = Context (MsgID 1062299988) (MsgMaxSize 65507) (MsgFlag False sequrityLevel) UserBasedSecurityModel $
            MsgSecurityParameter "" 0 0 "" "" ""   
         getrequest rid oids = 
-            SnmpPacket (Header Version3 context) $
+            SnmpPacket (Header Version3 contextP) $
                 ScopedPDU (ContextEngineID "") (ContextName "") $
                     PDU (GetRequest 1186729734 0 0) (Suite [])
 
@@ -59,7 +57,7 @@ returnResult3 :: NS.Socket -> Int -> IO Suite
 returnResult3 socket timeout = do
     result <- decode <$> recv socket 1500 :: IO V3Packet
     -- let ee = fromASN1 result :: Either String (V3Packet, [ASN1])
-    print result 
+    putStr . show $ result 
     return undefined 
 
 msg :: ByteString

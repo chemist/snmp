@@ -13,7 +13,15 @@ import Data.ByteString (ByteString, pack, unpack)
 import Debug.Trace
 
 
-data Context = Context MsgID MsgMaxSize MsgFlag MsgSecurityModel MsgSecurityParameter deriving (Show, Eq)
+data Context = Context MsgID MsgMaxSize MsgFlag MsgSecurityModel MsgSecurityParameter deriving (Eq)
+
+instance Show Context where
+    show (Context msgID msgMaxSize msgFlag msgSecurityModel msgSecurityParameter) = 
+      "context:\n\t" ++ show msgID 
+      ++ "\n\t" ++ show msgMaxSize 
+      ++ "\n\t" ++ show msgFlag 
+      ++ "\n\t" ++ show msgSecurityModel 
+      ++ "\n\t" ++ show msgSecurityParameter
 
 -- testHeader = Header Version3 (Just $ V3Context (MsgID 1000) (MsgMaxSize 65000) (MsgFlag False AuthNoPriv) UserBasedSecurityModel)
 
@@ -90,7 +98,16 @@ data MsgSecurityParameter = MsgSecurityParameter
   , msgAuthenticationParameters :: ByteString
   , msgPrivacyParameters :: ByteString
   }
-  deriving (Show, Eq)
+  deriving (Eq)
+
+instance Show MsgSecurityParameter where
+    show msg = "MsgSecurityParameter:\n\t\tAuthoritiveEngineId: " 
+       ++ show (msgAuthoritiveEngineId msg)
+       ++ "\n\t\tAuthoritiveEngineBoots: " ++ show (msgAuthoritiveEngineBoots msg)
+       ++ "\n\t\tAuthoritiveEngineTime: " ++ show (msgAuthoritiveEngineTime msg)
+       ++ "\n\t\tUserName: " ++ show (msgUserName msg)
+       ++ "\n\t\tAuthenticationParameters: " ++ show (msgAuthenticationParameters msg)
+       ++ "\n\t\tPrivacyParameters: " ++ show (msgPrivacyParameters msg)
 
 instance ASN1Object MsgSecurityParameter where
     toASN1 MsgSecurityParameter{..} xs = OctetString (encodeASN1' DER
@@ -124,7 +141,10 @@ parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
      End Sequence <- getNext
      return $ MsgSecurityParameter msgAuthoritiveEngineId msgAuthoritiveEngineBoots msgAuthoritiveEngineTime msgUserName msgAuthenticationParameters msgPrivacyParameters 
 
-data ScopedPDU = ScopedPDU ContextEngineID ContextName PDU deriving (Show, Eq)
+data ScopedPDU = ScopedPDU ContextEngineID ContextName PDU deriving (Eq)
+
+instance Show ScopedPDU where
+    show (ScopedPDU ceid cn pdu) = "ScopedPDU\n\t" ++ show ceid ++ "\n\t" ++ show cn ++ "\n\t" ++ show pdu ++ "\n"
 
 instance ASN1Object ScopedPDU where
     toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs = 
