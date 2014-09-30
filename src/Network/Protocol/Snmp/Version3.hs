@@ -10,6 +10,7 @@ import Control.Applicative
 import Data.Bits
 import Data.Word
 import Data.ByteString (ByteString, pack, unpack)
+import Debug.Trace
 
 
 data Context = Context MsgID MsgMaxSize MsgFlag MsgSecurityModel MsgSecurityParameter deriving (Show, Eq)
@@ -104,19 +105,24 @@ instance ASN1Object MsgSecurityParameter where
       ]) : xs
     fromASN1 asn = flip runParseASN1State asn $ do
         OctetString packed <- getNext
-        let a = decodeASN1' DER packed
-        case a of
-             Left e -> error $ show e
-             Right as -> do
-                 Start Sequence <- getNext
-                 OctetString msgAuthoritiveEngineId <- getNext
-                 IntVal msgAuthoritiveEngineBoots <- getNext
-                 IntVal msgAuthoritiveEngineTime <- getNext
-                 OctetString msgUserName <- getNext
-                 OctetString msgAuthenticationParameters <- getNext
-                 OctetString msgPrivacyParameters <- getNext
-                 End Sequence <- getNext
-                 return $ MsgSecurityParameter msgAuthoritiveEngineId msgAuthoritiveEngineBoots msgAuthoritiveEngineTime msgUserName msgAuthenticationParameters msgPrivacyParameters 
+        let r = case decodeASN1' DER packed of
+             Left e -> error $ "cant unpack msgSecurity parameter " ++ show e
+             Right asn' -> parseMsgSecurityParameter asn'
+        case r of
+             Left e -> error $ "cant parse msgSecurity parameter" ++ show e
+             Right r -> return r
+
+parseMsgSecurityParameter :: [ASN1] -> Either String MsgSecurityParameter
+parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
+     Start Sequence <- getNext
+     OctetString msgAuthoritiveEngineId <- getNext
+     IntVal msgAuthoritiveEngineBoots <- getNext
+     IntVal msgAuthoritiveEngineTime <- getNext
+     OctetString msgUserName <- getNext
+     OctetString msgAuthenticationParameters <- getNext
+     OctetString msgPrivacyParameters <- getNext
+     End Sequence <- getNext
+     return $ MsgSecurityParameter msgAuthoritiveEngineId msgAuthoritiveEngineBoots msgAuthoritiveEngineTime msgUserName msgAuthenticationParameters msgPrivacyParameters 
 
 data ScopedPDU = ScopedPDU ContextEngineID ContextName PDU deriving (Show, Eq)
 

@@ -31,6 +31,7 @@ import Data.Time
 import Data.Monoid
 import Control.Exception
 import Data.Typeable
+import Debug.Trace 
 
 data Value = Simple ASN1
            | Zero
@@ -109,7 +110,7 @@ instance ASN1Object a => ASN1Object (Header a) where
 
 data SnmpPacket a b = SnmpPacket a b deriving (Show, Eq)
 
-instance (ASN1Object a, ASN1Object b) => ASN1Object (SnmpPacket a b) where
+instance (ASN1Object a, ASN1Object b, Show b, Show a) => ASN1Object (SnmpPacket a b) where
     toASN1 (SnmpPacket header pdu) _ = 
       Start Sequence : ( toASN1 header ( toASN1 pdu [End Sequence]))
 
@@ -122,11 +123,11 @@ class Pack a where
     encode :: a -> ByteString
     decode :: ByteString -> a
 
-instance (ASN1Object a, ASN1Object b) => Pack (SnmpPacket a b) where
+instance (ASN1Object a, ASN1Object b, Show b, Show a) => Pack (SnmpPacket a b) where
     encode s = encodeASN1' DER $ toASN1 s []
     decode = toB 
 
-toB :: (ASN1Object a, ASN1Object b) => ByteString -> SnmpPacket a b
+toB :: (ASN1Object a, ASN1Object b, Show b, Show a) => ByteString -> SnmpPacket a b
 toB bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
@@ -143,7 +144,7 @@ data Request = GetRequest RequestId ErrorStatus ErrorIndex
              | GetBulk RequestId ErrorStatus ErrorIndex 
              | Inform
              | V2Trap
-             | Report
+             | Report RequestId ErrorStatus ErrorIndex
              deriving (Show, Eq)
 
 data PDU = PDU Request Suite deriving (Show, Eq)
@@ -161,33 +162,30 @@ instance Show Suite where
 oidToString :: OID -> String
 oidToString xs = foldr1 (\x y -> x ++ "." ++ y) $ map show xs
 
-instance ASN1Object Request where
-    toASN1 (GetRequest rid _ _    ) xs = (Start $ Container Context 0):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 0)]
-    toASN1 (GetNextRequest rid _ _) xs = (Start $ Container Context 1):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 1)]
-    toASN1 (GetResponse rid es ei ) xs = (Start $ Container Context 2):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 2)]
-    toASN1 (SetRequest rid _ _    ) xs = (Start $ Container Context 3):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 3)]
-    toASN1 (GetBulk rid es ei     ) xs = (Start $ Container Context 5):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 4)]
-    toASN1 _ _ = error "not inplemented"
-    fromASN1 asn = 
-      case fromASN1Request asn of
-           Left e -> Left e
-           Right (r, _) -> Right r
+instance ASN1Object PDU where
+    toASN1 (PDU (GetRequest rid _ _    ) sd) xs = (Start $ Container Context 0):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 0)] ++ xs
+    toASN1 (PDU (GetNextRequest rid _ _) sd) xs = (Start $ Container Context 1):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 1)] ++ xs
+    toASN1 (PDU (GetResponse rid es ei ) sd) xs = (Start $ Container Context 2):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 2)] ++ xs
+    toASN1 (PDU (SetRequest rid _ _    ) sd) xs = (Start $ Container Context 3):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 3)] ++ xs
+    toASN1 (PDU (GetBulk rid es ei     ) sd) xs = (Start $ Container Context 5):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
+    toASN1 (PDU (Report rid es ei      ) sd) xs = (Start $ Container Context 8):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 8)] ++ xs
 
-fromASN1Request :: [ASN1] -> Either String ((Request, [ASN1]), [ASN1])
-fromASN1Request asn = flip runParseASN1State asn $ do
+    fromASN1 asn = flip runParseASN1State asn $ do
         Start container <- getNext
         IntVal rid <- getNext
         IntVal es <- getNext
         IntVal ei <- getNext
         x <- getNextContainer Sequence
-        End container' <- getNext
-        case (container == container', container) of
-             (True, Container Context 0) -> return (GetRequest rid es ei, x)
-             (True, Container Context 1) -> return (GetNextRequest rid es ei, x)
-             (True, Container Context 2) -> return (GetResponse rid es ei, x)
-             (True, Container Context 3) -> return (SetRequest rid es ei, x)
-             (True, Container Context 5) -> return (GetBulk rid es ei, x)
-             _ -> error "not inplemented or bad sequence"
+        End container <- getNext
+        let psuite = fromASN1 x
+        case (container, psuite) of
+             (Container Context 0, Right (suite, _)) -> return $ PDU (GetRequest     rid es ei) suite
+             (Container Context 1, Right (suite, _)) -> return $ PDU (GetNextRequest rid es ei) suite
+             (Container Context 2, Right (suite, _)) -> return $ PDU (GetResponse    rid es ei) suite
+             (Container Context 3, Right (suite, _)) -> return $ PDU (SetRequest     rid es ei) suite
+             (Container Context 5, Right (suite, _)) -> return $ PDU (GetBulk        rid es ei) suite
+             (Container Context 8, Right (suite, _)) -> return $ PDU (Report         rid es ei) suite
+             e -> error $ "cant parse PDU " ++ show e
 
 instance ASN1Object Suite where
     toASN1 (Suite xs) ys = foldr toA [] xs ++ ys
@@ -202,13 +200,6 @@ instance ASN1Object Suite where
                End Sequence <- getNext
                return $ Coupla x v
         return $ Suite xs
-
-instance ASN1Object PDU where
-    toASN1 (PDU r sd) xs = toASN1 r (toASN1 sd []) ++  xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        r <- getObject 
-        sd <- getObject
-        return $ PDU r sd
 
 data ClientException = TimeoutException 
                      | ServerException Integer
@@ -239,10 +230,6 @@ instance Show ClientException where
     show (ServerException x) = "Exception " ++ show x
 
 instance Exception ClientException
-
-
-
-
 
 -- copy paste from asn1-encoding
 

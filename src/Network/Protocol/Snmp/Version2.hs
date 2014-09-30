@@ -35,12 +35,4 @@ instance ASN1Object Community where
         OctetString x <- getNext
         return $ Community x
 
-instance ASN1Object (SnmpPacket Community PDU) where
-    toASN1 (SnmpPacket header pdu) _ = 
-      Start Sequence : ( toASN1 header ( toASN1 pdu [End Sequence]))
-   
-    fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
-        header <- getObject
-        pdu <- getObject
-        return $ SnmpPacket header pdu 
 

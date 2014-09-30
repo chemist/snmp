@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Network.Snmp.Client.Types where
 
 import Network.Protocol.Snmp
@@ -36,4 +37,7 @@ data Client = Client
   , close :: IO ()
   }
 
+defConfig Version1 = ConfigV2 "localhost" "161" (sec 5) (Community "public") 
+defConfig Version2 = ConfigV2 "localhost" "161" (sec 5) (Community "public")
+defConfig Version3 = ConfigV3 "localhost" "161" (sec 5) "guest" "readonly"
 
