@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 module Network.Snmp.Client.Version3 
 ( clientV3
+, msg
 )
 where
 
@@ -42,6 +43,7 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
             rid <- succRequestId ref
             -- print (toASN1 (getrequest rid oids) [])
             sendAll socket $ encode $ getrequest rid oids
+            putStr . show $ getrequest rid oids
             returnResult3 socket timeout
     return $ Client 
       { get = get' 
@@ -61,9 +63,49 @@ returnResult3 socket timeout = do
     return undefined 
 
 msg :: ByteString
-msg = "0!\EOT\DC1\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL\STX\SOH\DC1\STX\ETX\ACKI%\EOT\NUL\EOT\NUL\EOT\NUL"
+msg = "03\EOT\DC1\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL\STX\SOH6\STX\STX\NUL\156\EOT\achemist\EOT\f\STX\162gZ\189\158 \151\182\DEL,\249\EOT\NUL"
 
 {--
+second request
+
+[Start Sequence
+  ,IntVal 3
+  ,Start Sequence
+    ,IntVal 1416337610
+    ,IntVal 65507
+    ,OctetString "\ENQ"
+    ,IntVal 3
+  ,End Sequence
+  ,OctetString "03\EOT\DC1\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL\STX\SOH6\STX\STX\NUL\156\EOT\achemist\EOT\f\STX\162gZ\189\158 \151\182\DEL,\249\EOT\NUL"
+  ,Start Sequence
+    ,OctetString "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
+    ,OctetString ""
+    ,Start (Container Context 0)
+      ,IntVal 194066496
+      ,IntVal 0
+      ,IntVal 0
+      ,Start Sequence
+        ,Start Sequence
+          ,OID [1,3,6,1,2,1,25,1,1,0]
+          ,Null
+        ,End Sequence
+      ,End Sequence
+    ,End (Container Context 0)
+  ,End Sequence
+,End Sequence]
+
+MsgSequrityParameter
+[Start Sequence
+  ,OctetString "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
+  ,IntVal 54
+  ,IntVal 156
+  ,OctetString "chemist"
+  ,OctetString "\STX\162gZ\189\158 \151\182\DEL,\249"
+  ,OctetString ""
+,End Sequence]
+
+
+
 [Start Sequence,OctetString "",IntVal 0,IntVal 0,OctetString "",OctetString "",OctetString "",End Sequence]
 
 [Start Sequence
