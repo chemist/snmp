@@ -2,9 +2,9 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 module Network.Snmp.Client.Version3 
-( clientV3
-, msg
-)
+-- ( clientV3
+-- , msg
+-- )
 where
 
 import Data.ByteString (ByteString)
@@ -12,6 +12,7 @@ import Network.Socket hiding (recv, socket, close)
 import qualified Network.Socket as NS
 import Network.Socket.ByteString (recv, sendAll)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Char8 as C
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async
@@ -21,6 +22,12 @@ import Control.Monad (when)
 import Data.ASN1.BinaryEncoding
 import Data.ASN1.Encoding
 import Data.ASN1.Types hiding (Context) 
+import Data.Digest.Pure.MD5
+import qualified Data.Binary as Bin (encode)
+import Data.Monoid ((<>))
+import Data.Bits (xor)
+import Data.Word (Word8)
+import Control.Exception 
 import Debug.Trace
 
 import Network.Protocol.Snmp
@@ -32,18 +39,31 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
     socket <- trace "open socket" $ makeSocket hostname port 
     ref <- trace "init rid" $ newIORef 0
     let 
-        contextP = Context (MsgID 1062299988) (MsgMaxSize 65507) (MsgFlag False sequrityLevel) UserBasedSecurityModel $
+        contextP = Context (MsgID 1062299998) (MsgMaxSize 65507) (MsgFlag False sequrityLevel) UserBasedSecurityModel $
            MsgSecurityParameter "" 0 0 "" "" ""   
         getrequest rid oids = 
             SnmpPacket (Header Version3 contextP) $
                 ScopedPDU (ContextEngineID "") (ContextName "") $
-                    PDU (GetRequest 1186729734 0 0) (Suite [])
+                    PDU (GetRequest 1186729794 0 0) (Suite [])
 
         get' oids = withSocketsDo $ do
             rid <- succRequestId ref
             -- print (toASN1 (getrequest rid oids) [])
             sendAll socket $ encode $ getrequest rid oids
             putStr . show $ getrequest rid oids
+            resp <- decode <$> recv socket 1500 :: IO V3Packet
+            let full = fullMsgFromResponse (MsgFlag True sequrityLevel) 
+                                           sequrityName 
+                                           cleanPass 
+                                           (PDU (GetRequest (ridFromReport resp - 1) 0 0) (Suite $ map (\x -> Coupla x Zero) oids))
+                                           resp
+            print "second full"
+            putStr . show $ full
+            let ContextEngineID ceid = engineIdFromV3Packet resp
+                key = makeAuthKeyMD5 authPass ceid
+                sign = makeSign key full
+                signedPacket = signPacket sign full
+            sendAll socket $ encode signedPacket
             returnResult3 socket timeout
     return $ Client 
       { get = get' 
@@ -55,123 +75,141 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
       , close = trace "close socket" $ NS.close socket
       }
 
-returnResult3 :: NS.Socket -> Int -> IO Suite
-returnResult3 socket timeout = do
-    result <- decode <$> recv socket 1500 :: IO V3Packet
-    -- let ee = fromASN1 result :: Either String (V3Packet, [ASN1])
-    putStr . show $ result 
-    return undefined 
+fullMsgFromResponse :: MsgFlag -> Login -> Password -> PDU -> V3Packet -> V3Packet
+fullMsgFromResponse msgFlag login pass pdu v3packet = 
+  let SnmpPacket (Header Version3 contP) (ScopedPDU ceid cn _) = v3packet
+      Context msgId msgMaxSize _ _ (MsgSecurityParameter aeid aeb aet _ _ p) = contP
+      newContP = Context (nextMsg msgId) msgMaxSize msgFlag UserBasedSecurityModel (MsgSecurityParameter aeid aeb aet login pass p)
+  in SnmpPacket (Header Version3 newContP) (ScopedPDU ceid cn pdu)
 
-msg :: ByteString
-msg = "03\EOT\DC1\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL\STX\SOH6\STX\STX\NUL\156\EOT\achemist\EOT\f\STX\162gZ\189\158 \151\182\DEL,\249\EOT\NUL"
+ridFromReport :: V3Packet -> Integer
+ridFromReport (SnmpPacket _ (ScopedPDU _ _ (PDU (Report r _ _) _))) = r
 
-{--
-second request
+signPacket :: ByteString -> V3Packet -> V3Packet
+signPacket sign (SnmpPacket (Header v contP) spdu) =
+    let Context a b c d (MsgSecurityParameter e f z l _ p) = contP
+    in SnmpPacket (Header v (Context a b c d (MsgSecurityParameter e f z l sign p))) spdu
+  
+  
+nextMsg :: MsgID -> MsgID
+nextMsg (MsgID x) = MsgID (pred x)
 
-[Start Sequence
-  ,IntVal 3
-  ,Start Sequence
-    ,IntVal 1416337610
-    ,IntVal 65507
-    ,OctetString "\ENQ"
-    ,IntVal 3
-  ,End Sequence
-  ,OctetString "03\EOT\DC1\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL\STX\SOH6\STX\STX\NUL\156\EOT\achemist\EOT\f\STX\162gZ\189\158 \151\182\DEL,\249\EOT\NUL"
-  ,Start Sequence
-    ,OctetString "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
-    ,OctetString ""
-    ,Start (Container Context 0)
-      ,IntVal 194066496
-      ,IntVal 0
-      ,IntVal 0
-      ,Start Sequence
-        ,Start Sequence
-          ,OID [1,3,6,1,2,1,25,1,1,0]
-          ,Null
-        ,End Sequence
-      ,End Sequence
-    ,End (Container Context 0)
-  ,End Sequence
-,End Sequence]
+engineIdFromV3Packet :: V3Packet -> ContextEngineID
+engineIdFromV3Packet (SnmpPacket _ (ScopedPDU eid _ _)) = eid
 
-MsgSequrityParameter
-[Start Sequence
-  ,OctetString "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
-  ,IntVal 54
-  ,IntVal 156
-  ,OctetString "chemist"
-  ,OctetString "\STX\162gZ\189\158 \151\182\DEL,\249"
-  ,OctetString ""
-,End Sequence]
-
-
-
-[Start Sequence,OctetString "",IntVal 0,IntVal 0,OctetString "",OctetString "",OctetString "",End Sequence]
-
-[Start Sequence
-  ,IntVal 3
-  ,Start Sequence
-    ,IntVal 1062299988
-    ,IntVal 65507
-    ,OctetString "\NUL"
-    ,IntVal 3
-  ,End Sequence
-  ,OctetString "0!\EOT\DC1\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL\STX\SOH\DC1\STX\ETX\ACKI%\EOT\NUL\EOT\NUL\EOT\NUL"
-  ,Start Sequence
-    ,OctetString "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
-    ,OctetString ""
-    ,Start (Container Context 8)
-      ,IntVal 1186729734
-      ,IntVal 0
-      ,IntVal 0
-      ,Start Sequence
-        ,Start Sequence
-          ,OID [1,3,6,1,6,3,15,1,1,4,0]
-          ,Other Application 1 "7"
-        ,End Sequence
-      ,End Sequence
-    ,End (Container Context 8)
-  ,End Sequence
-,End Sequence]
-
-000: 30 3E 02 01  03 30 11 02  04 44 1E 7D  C2 02 03 00    0>...0...D.}�...
-0016: FF E3 04 01  04 02 01 03  04 10 30 0E  04 00 02 01    ��........0.....
-0032: 00 02 01 00  04 00 04 00  04 00 30 14  04 00 04 00    ..........0.....
-0048: A0 0E 02 04  1B 2A 31 79  02 01 00 02  01 00 30 00    �....*1y......0.
-
-
-[Start Sequence
-  ,IntVal 3
-  ,Start Sequence
-    ,IntVal 1062299987
-    ,IntVal 65507
-    ,OctetString "\EOT"
-    ,IntVal 3
-  ,End Sequence
-  ,OctetString "0\SO\EOT\NUL\STX\SOH\NUL\STX\SOH\NUL\EOT\NUL\EOT\NUL\EOT\NUL"
-  ,Start Sequence
-    ,OctetString ""
-    ,OctetString ""
-    ,Start (Container Context 0)
-      ,IntVal 1186729734
-      ,IntVal 0
-      ,IntVal 0
-      ,Start Sequence
-      ,End Sequence
-    ,End (Container Context 0)
-  ,End Sequence
-,End Sequence]
-                --}
-
-
-
-{--
 returnResult3 :: NS.Socket -> Int -> IO Suite
 returnResult3 socket timeout = do
     result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO V3Packet)
     case result of
-         Right (SnmpPacket (Header v c) (ScopedPDU ceid cn (PDU (GetResponse rid e ie) d))) -> do
+         Right (SnmpPacket _ (ScopedPDU _ _ (PDU (GetResponse rid e ie) d))) -> do
              when (e /= 0) $ throwIO $ ServerException e
              return d
          Left _ -> throwIO TimeoutException            
-         --}
+--     result <- decode <$> recv socket 1500 :: IO V3Packet
+    -- let ee = fromASN1 result :: Either String (V3Packet, [ASN1])
+--     putStr . show $ result 
+--     return undefined 
+
+{--
+ 6.3.1. Processing an Outgoing Message
+
+   This section describes the procedure followed by an SNMP engine
+      whenever it must authenticate an outgoing message using the
+         usmHMACMD5AuthProtocol.
+
+   1) The msgAuthenticationParameters field is set to the serialization,
+         according to the rules in [RFC3417], of an OCTET STRING containing
+               12 zero octets.
+--}
+
+cleanPass = B.pack $ replicate 12 0x00
+
+newtype AuthKey = AuthKey BL.ByteString deriving (Show, Eq, Ord)
+type EngineId = ByteString
+
+testPass :: Password
+testPass = "maplesyrup"
+
+testEngineId :: ByteString
+testEngineId = "\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\STX"
+
+testAuthKey :: AuthKey
+testAuthKey = AuthKey "Ro^\237\159\204\226o\137d\194\147\a\135\216+"
+
+makeAuthKeyMD5 :: Password -> EngineId -> AuthKey
+makeAuthKeyMD5 pass eid = 
+  let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
+      authKey = Bin.encode $ md5 buf
+  in AuthKey <$> Bin.encode $ md5 $ authKey <> BL.fromStrict eid <> authKey
+
+authenticationParameterZero :: ASN1
+authenticationParameterZero = OctetString $ B.replicate 12 0
+
+newtype ExtendAuthKey = ExtendAuthKey BL.ByteString deriving (Show, Eq, Ord)
+
+makeExtendAuthKey :: AuthKey -> ExtendAuthKey
+makeExtendAuthKey (AuthKey x) = ExtendAuthKey $ x <> BL.replicate 48 0x00
+
+newtype K1 = K1 BL.ByteString
+newtype K2 = K2 BL.ByteString
+
+ipad :: [Word8]
+ipad = replicate 64 0x36
+
+opad :: [Word8]
+opad = replicate 64 0x5c
+
+step2 :: AuthKey -> (K1, K2)
+step2 au = 
+  let ExtendAuthKey ex = makeExtendAuthKey au
+      k1 = K1 . BL.pack . map (uncurry xor) $ zip (BL.unpack ex) ipad
+      k2 = K2 . BL.pack . map (uncurry xor) $ zip (BL.unpack ex) opad
+  in (k1, k2)
+
+makeSign :: AuthKey -> V3Packet -> ByteString
+makeSign authKey p = 
+  let (K1 k1, K2 k2) = step2 authKey
+      packetAsBin = encode p
+      f1 = Bin.encode $ md5 $ k1 <> BL.fromStrict packetAsBin
+      f2 = Bin.encode $ md5 $ k2 <> f1
+  in BL.toStrict $ BL.take 12 f2
+
+
+
+{--
+
+   2) From the secret authKey, two keys K1 and K2 are derived:
+
+      a) extend the authKey to 64 octets by appending 48 zero octets;
+               save it as extendedAuthKey
+
+      b) obtain IPAD by replicating the octet 0x36 64 times;
+
+      c) obtain K1 by XORing extendedAuthKey with IPAD;
+
+      d) obtain OPAD by replicating the octet 0x5C 64 times;
+
+      e) obtain K2 by XORing extendedAuthKey with OPAD.
+
+   3) Prepend K1 to the wholeMsg and calculate MD5 digest over it
+         according to [RFC1321].
+
+   4) Prepend K2 to the result of the step 4 and calculate MD5 digest
+         over it according to [RFC1321].  Take the first 12 octets of the
+               final digest - this is Message Authentication Code (MAC).
+
+   5) Replace the msgAuthenticationParameters field with MAC obtained in
+         the step 4.
+
+
+
+
+Blumenthal & Wijnen         Standards Track                    [Page 55]
+ 
+RFC 3414                     USM for SNMPv3                December 2002
+
+
+   6) The authenticatedWholeMsg is then returned to the caller together
+         with statusInformation indicating success.
+
+--}

@@ -5,7 +5,11 @@ import Data.ByteString (ByteString)
 import Control.Exception (bracket)
 import Debug.Trace
 
+import qualified Data.ByteString as BS
+import Control.Applicative
+
 import Network.Snmp.Client
+import Network.Protocol.Snmp
 
 root :: [Integer]
 root = [1,3,6,1,2,1,2,2,1,2]
@@ -28,6 +32,18 @@ bad = "1.4.6.1.2.1.1.4"
 oi :: ByteString
 oi = ".1.3.6.1.2.1.1.9.1.2.1"
 
+showExample = do
+    firstRequest <- decode <$> BS.readFile "firstRequest" :: IO V3Packet
+    firstResponse <- decode <$> BS.readFile "firstResponse" :: IO V3Packet
+    secondRequest <- decode <$> BS.readFile "secondRequest" :: IO V3Packet
+    secondResponse <- decode <$> BS.readFile "secondResponse" :: IO V3Packet
+    print "first"
+    putStr . show $ firstRequest
+    putStr . show $ firstResponse
+    print "second"
+    putStr . show $ secondRequest
+    putStr . show $ secondResponse
+
 main = client3
 
 conf2 :: Config
@@ -38,7 +54,7 @@ conf3 :: Config
 conf3 = (defConfig Version3) { hostname = "salt" 
                              , sequrityName = "chemist"
                              , authPass = "helloall"
-                             , privPass = "helloall"
+                             , privPass = ""
                              , sequrityLevel = AuthNoPriv
                              } 
 
@@ -53,9 +69,12 @@ client2 = bracket (client conf2)
                   close
                   requests
 
+testOid = "1.3.6.1.2.1.25.1.1.0"
+
 requests :: Client -> IO ()
 requests snmp = do
     print "get request"
+    putStr . show =<< get snmp [oidFromBS testOid]
     putStr . show =<< get snmp [oidFromBS sysUptime, oidFromBS oi, zeroDotZero]
     print "bulkget request"
     putStr . show =<< bulkget snmp [oidFromBS sysUptime]
