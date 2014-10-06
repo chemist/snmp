@@ -24,42 +24,47 @@ import Data.ASN1.Encoding
 import Data.ASN1.Types hiding (Context) 
 import Data.Digest.Pure.MD5
 import qualified Data.Binary as Bin (encode)
-import Data.Monoid ((<>))
+import Data.Monoid ((<>), mempty)
 import Data.Bits (xor)
 import Data.Word (Word8)
 import Control.Exception 
+import Control.Lens
 import Debug.Trace
 
 import Network.Protocol.Snmp
 import Network.Snmp.Client.Types
 import Network.Snmp.Client.Internal 
 
+v3 :: V3Packet 
+v3 = setVersion Version3 $ mempty
+
 clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> ByteString -> AuthType -> PrivType -> IO Client
 clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
     socket <- trace "open socket" $ makeSocket hostname port 
-    ref <- trace "init rid" $ newIORef 0
+    ref <- trace "init rid" $ newIORef 1000000
     let 
-        contextP = Context (MsgID 1062299998) (MsgMaxSize 65507) (MsgFlag False sequrityLevel) UserBasedSecurityModel $
-           MsgSecurityParameter "" 0 0 "" "" ""   
-        getrequest rid oids = 
-            SnmpPacket (Header Version3 contextP) $
-                ScopedPDU (ContextEngineID "") (ContextName "") $
-                    PDU (GetRequest 1186729794 0 0) (Suite [])
-
+        newPacket x = ( setMsgId x  
+                      . setMaxSize (MsgMaxSize 65007) 
+                      . setReportable False  
+                      . setPrivAuth AuthNoPriv  
+                      . setRid 1000000 
+                      ) v3
         get' oids = withSocketsDo $ do
             rid <- succRequestId ref
             -- print (toASN1 (getrequest rid oids) [])
-            sendAll socket $ encode $ getrequest rid oids
-            putStr . show $ getrequest rid oids
+            sendAll socket $ encode $ newPacket (MsgID rid) 
+            putStr . show $ newPacket (MsgID rid) 
             resp <- decode <$> recv socket 1500 :: IO V3Packet
-            let full = fullMsgFromResponse (MsgFlag True sequrityLevel) 
-                                           sequrityName 
-                                           cleanPass 
-                                           (PDU (GetRequest (ridFromReport resp - 1) 0 0) (Suite $ map (\x -> Coupla x Zero) oids))
-                                           resp
+            let flag = (setReportable True) . (setPrivAuth sequrityLevel) 
+                full = ( (setReportable True) 
+                       . (setPrivAuth sequrityLevel) 
+                       . (setUserName sequrityName)  
+                       . (setAuthenticationParameters cleanPass)  
+                       . (setPDU (PDU (GetRequest (getRid resp - 1) 0 0) (Suite $ map (\x -> Coupla x Zero) oids))) 
+                       ) resp
             print "second full"
             putStr . show $ full
-            let ContextEngineID ceid = engineIdFromV3Packet resp
+            let ContextEngineID ceid = getEngineId resp
                 key = makeAuthKeyMD5 authPass ceid
                 sign = makeSign key full
                 signedPacket = signPacket sign full
@@ -75,35 +80,19 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
       , close = trace "close socket" $ NS.close socket
       }
 
-fullMsgFromResponse :: MsgFlag -> Login -> Password -> PDU -> V3Packet -> V3Packet
-fullMsgFromResponse msgFlag login pass pdu v3packet = 
-  let SnmpPacket (Header Version3 contP) (ScopedPDU ceid cn _) = v3packet
-      Context msgId msgMaxSize _ _ (MsgSecurityParameter aeid aeb aet _ _ p) = contP
-      newContP = Context (nextMsg msgId) msgMaxSize msgFlag UserBasedSecurityModel (MsgSecurityParameter aeid aeb aet login pass p)
-  in SnmpPacket (Header Version3 newContP) (ScopedPDU ceid cn pdu)
-
-ridFromReport :: V3Packet -> Integer
-ridFromReport (SnmpPacket _ (ScopedPDU _ _ (PDU (Report r _ _) _))) = r
-
 signPacket :: ByteString -> V3Packet -> V3Packet
-signPacket sign (SnmpPacket (Header v contP) spdu) =
-    let Context a b c d (MsgSecurityParameter e f z l _ p) = contP
-    in SnmpPacket (Header v (Context a b c d (MsgSecurityParameter e f z l sign p))) spdu
-  
+signPacket = setAuthenticationParameters
   
 nextMsg :: MsgID -> MsgID
 nextMsg (MsgID x) = MsgID (pred x)
-
-engineIdFromV3Packet :: V3Packet -> ContextEngineID
-engineIdFromV3Packet (SnmpPacket _ (ScopedPDU eid _ _)) = eid
 
 returnResult3 :: NS.Socket -> Int -> IO Suite
 returnResult3 socket timeout = do
     result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO V3Packet)
     case result of
-         Right (SnmpPacket _ (ScopedPDU _ _ (PDU (GetResponse rid e ie) d))) -> do
-             when (e /= 0) $ throwIO $ ServerException e
-             return d
+         Right resp -> do
+             when (0 /= getErrorStatus resp ) $ throwIO $ ServerException $ getErrorStatus resp
+             return $ getSuite resp
          Left _ -> throwIO TimeoutException            
 --     result <- decode <$> recv socket 1500 :: IO V3Packet
     -- let ee = fromASN1 result :: Either String (V3Packet, [ASN1])

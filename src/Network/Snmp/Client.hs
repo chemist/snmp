@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE RecordWildCards #-}
 module Network.Snmp.Client 
 -- * types
 ( Client
@@ -36,7 +36,20 @@ import Network.Snmp.Client.Types
 import Network.Snmp.Client.Internal
 import Network.Snmp.Client.Version2
 import Network.Snmp.Client.Version3
+import Control.Lens hiding (set)
 
 client :: Config -> IO Client
-client ConfigV2{..} = clientV2 hostname port timeout community
-client ConfigV3{..} = clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType
+client conf@ConfigV2{..} = clientV2 hostname 
+                                    port 
+                                    timeout 
+                                    community
+client conf@ConfigV3{..}  = clientV3 hostname       
+                                     port           
+                                     timeout        
+                                     sequrityName   
+                                     authPass       
+                                     privPass       
+                                     sequrityLevel  
+                                     context        
+                                     authType       
+                                     privType      

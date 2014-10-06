@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Network.Protocol.Snmp.Types 
 ( Value(..)
 , OID(..)
@@ -14,6 +15,14 @@ module Network.Protocol.Snmp.Types
 , Version(..)
 , Header(..)
 , SnmpPacket(..)
+, body
+, header
+, version
+, headerData
+, rid
+, request
+, suite
+, es
 )
 where
 
@@ -31,6 +40,7 @@ import Data.Time
 import Data.Monoid
 import Control.Exception
 import Data.Typeable
+import Control.Lens hiding (Context)
 import Debug.Trace 
 
 data Value = Simple ASN1
@@ -95,7 +105,18 @@ data Version = Version1
              | Version3
              deriving (Eq, Show)
 
-data Header a = Header Version a deriving (Eq)
+instance Monoid Version where
+    mempty = Version1
+    _ `mappend` x = x
+
+data Header a = Header 
+  { _version :: Version 
+  , _headerData :: a
+  } deriving (Eq)
+
+instance Monoid a => Monoid (Header a) where
+    mempty = Header mempty mempty
+    Header a0 b0 `mappend` Header a1 b1 = Header (a0 <> a1) (b0 <> b1)
 
 instance Show a => Show (Header a) where
     show (Header v a) = "\n  version: " ++ show v ++ "\n  " ++ show a
@@ -111,7 +132,14 @@ instance ASN1Object a => ASN1Object (Header a) where
              1 -> Header Version2 <$> getObject
              3 -> Header Version3 <$> getObject
 
-data SnmpPacket a b = SnmpPacket a b deriving (Eq)
+data SnmpPacket a b = SnmpPacket 
+  { _header :: a
+  , _body :: b 
+  } deriving (Eq)
+
+instance (Monoid a, Monoid b) => Monoid (SnmpPacket a b) where
+    mempty = SnmpPacket mempty mempty
+    SnmpPacket a0 b0 `mappend` SnmpPacket a1 b1 = SnmpPacket (a0 <> a1) (b0 <> b1)
 
 instance (Show a, Show b) => Show (SnmpPacket a b) where
     show (SnmpPacket a b) = "snmp packet: \n  header: " ++ show a ++ "\n  pdu: " ++ show b
@@ -143,19 +171,23 @@ type RequestId = Integer
 type ErrorStatus = Integer
 type ErrorIndex = Integer
 
-data Request = GetRequest RequestId ErrorStatus ErrorIndex 
-             | GetNextRequest RequestId ErrorStatus ErrorIndex 
-             | GetResponse RequestId ErrorStatus ErrorIndex  
-             | SetRequest RequestId ErrorStatus ErrorIndex 
-             | GetBulk RequestId ErrorStatus ErrorIndex 
+data Request = GetRequest { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
+             | GetNextRequest { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
+             | GetResponse { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
+             | SetRequest { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
+             | GetBulk { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
              | Inform
              | V2Trap
-             | Report RequestId ErrorStatus ErrorIndex
+             | Report { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
              deriving (Show, Eq)
 
-data PDU = PDU Request Suite deriving (Show, Eq)
+data PDU = PDU { _request :: Request, _suite :: Suite } deriving (Show, Eq)
 
-data Coupla = Coupla OID Value deriving (Eq)
+instance Monoid PDU where
+    mempty = PDU (GetRequest 0 0 0) mempty
+    _ `mappend` PDU a1 b1 = PDU a1 b1
+
+data Coupla = Coupla { _oid :: OID, _value :: Value } deriving (Eq)
 
 newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
 
@@ -290,6 +322,8 @@ intOfBytes b
 uintOfBytes :: ByteString -> (Int, Integer)
 uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0 b)
 
-
-
-
+makeLenses ''Header 
+makeLenses ''SnmpPacket 
+makeLenses ''Request 
+makeLenses ''PDU 
+makeLenses ''Coupla 
