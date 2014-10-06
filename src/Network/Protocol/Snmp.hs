@@ -1,152 +1,169 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Network.Protocol.Snmp 
-( SnmpVersion(..)
-, SnmpData(..)
-, Community(..)
+-- ^ Types
+( PDU
 , Request(..)
-, PDU(..)
+, Value(..)
+, ClientException(..)
+, OID
+, Suite(..)
+, Coupla(..)
+, Pack(..)
+, Version(..)
+, Packet
+, Header
 , RequestId
-, SnmpPacket(..)
-, encode
-, decode
-)
+-- ^ Second version
+, Community(..)
+-- ^ Third version
+, ContextEngineID(..)
+, ContextName(..)
+, VersionedPDU
+, ID(..)
+, Flag
+, MaxSize(..)
+, SecurityModel
+, SecurityParameter
+, Reportable
+, PrivAuth(..)
+-- ^ setters
+, setVersion
+, setMsgId
+, setMaxSize
+, setReportable
+, setRid
+, setPrivAuth
+, setPDU
+, setUserName
+, setAuthenticationParameters
+, setFlag
+, setCommunity
+, setSuite
+, setRequest
+-- -- ^ getters
+, getRid
+, getEngineId
+, getVersion
+, getErrorStatus
+, getSuite
+-- ^ aliases
+, OIDS
+-- ^ helpers
+, initial
+) 
 where
 
-import Data.ASN1.Parse
-import Data.ASN1.Types
-import Data.ASN1.Encoding
-import Data.ASN1.BinaryEncoding
+import Network.Protocol.Snmp.Types
 import Data.ByteString (ByteString)
-import Data.ByteString.Lazy (toStrict, fromStrict)
-import Control.Applicative
-import Network.Protocol.Simple
-import Data.Monoid
-import Debug.Trace
+import Data.Monoid (mempty)
 
-newtype Community = Community ByteString deriving (Show, Eq)
-type RequestId = Integer
-type ErrorStatus = Integer
-type ErrorIndex = Integer
+type OIDS = [OID]
 
-data SnmpVersion = Version1
-                 | Version2
-                 | Version3
-                 deriving (Show, Eq)
+setVersion :: Version -> Packet -> Packet
+setVersion v Packet{..} = case header of
+                               HeaderV2{..} -> Packet (header { version = v }) body
+                               HeaderV3{..} -> Packet (header { version = v }) body
 
-data Request = GetRequest RequestId ErrorStatus ErrorIndex 
-             | GetNextRequest RequestId ErrorStatus ErrorIndex 
-             | GetResponse RequestId ErrorStatus ErrorIndex  
-             | SetRequest RequestId ErrorStatus ErrorIndex 
-             | GetBulk RequestId ErrorStatus ErrorIndex 
-             | Inform
-             | V2Trap
-             | Report
-             deriving (Show, Eq)
+getEngineId :: Packet -> ContextEngineID
+getEngineId Packet{..} = contextEngineId body 
 
-data PDU = PDU Request SnmpData deriving (Show, Eq)
+getVersion :: Packet -> Version
+getVersion Packet{..} = version header
 
-data SnmpData = SnmpData [(OID, SnmpType)] deriving (Eq)
+getErrorStatus :: Packet -> Integer
+getErrorStatus Packet{..} = es . request . pdu $ body
 
-instance Monoid SnmpData where
-    mempty = SnmpData []
-    mappend (SnmpData xs) (SnmpData ys) = SnmpData $ xs <> ys
+getRid :: Packet -> Integer
+getRid Packet{..} = rid . request . pdu $ body
 
-instance Show SnmpData where
-    show (SnmpData xs) = unlines $ map (\(oid, snmptype) -> oidToString oid ++ " = " ++ show snmptype) xs
+getSuite :: Packet -> Suite
+getSuite Packet{..} = suite . pdu $ body
 
-oidToString :: OID -> String
-oidToString xs = foldr1 (\x y -> x ++ "." ++ y) $ map show xs
+setSuite :: Suite -> Packet -> Packet 
+setSuite s Packet{..} = Packet header (body { pdu = (pdu body) { suite = s }})
 
-data SnmpPacket = SnmpPacket SnmpVersion Community PDU deriving (Show, Eq)
+setMaxSize :: MaxSize -> Packet -> Packet
+setMaxSize m Packet{..} = case header of
+                               HeaderV3{..} -> Packet (header { maXSize = m }) body
+                               _ -> error "setMaxSize: bad version "
 
-instance ASN1Object SnmpVersion where
-    toASN1 Version1 xs = IntVal 0 : xs
-    toASN1 Version2 xs = IntVal 1 : xs
-    toASN1 Version3 xs = IntVal 2 : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        IntVal x <- getNext
-        case x of
-             0 -> return Version1
-             1 -> return Version2
-             2 -> return Version3
-             _ -> error "unknown version"
+setMsgId :: ID -> Packet -> Packet
+setMsgId i Packet{..} = case header of
+                             HeaderV3{..} -> Packet (header { iD = i }) body
+                             _ -> error "setMsgId: bad version "
 
-instance ASN1Object Community where
-    toASN1 (Community x) xs = OctetString x : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        OctetString x <- getNext
-        return $ Community x
+setReportable :: Reportable -> Packet -> Packet
+setReportable r Packet{..} = 
+    case header of
+       HeaderV3{..} -> let Flag _ a = flag
+                      in Packet (header { flag = Flag r a }) body
+       _ -> error "setReportable: bad version "
 
-instance ASN1Object Request where
-    toASN1 (GetRequest rid _ _    ) xs = (Start $ Container Context 0):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 0)]
-    toASN1 (GetNextRequest rid _ _) xs = (Start $ Container Context 1):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 1)]
-    toASN1 (GetResponse rid es ei ) xs = (Start $ Container Context 2):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 2)]
-    toASN1 (SetRequest rid _ _    ) xs = (Start $ Container Context 3):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : xs ++ [ End Sequence, End (Container Context 3)]
-    toASN1 (GetBulk rid es ei     ) xs = (Start $ Container Context 5):IntVal rid : IntVal es : IntVal ei: Start Sequence : xs ++ [ End Sequence, End (Container Context 4)]
-    toASN1 _ _ = error "not inplemented"
-    fromASN1 asn = 
-      case fromASN1Request asn of
-           Left e -> Left e
-           Right (r, _) -> Right r
+setPrivAuth :: PrivAuth -> Packet -> Packet
+setPrivAuth a Packet{..} = 
+   case header of
+       HeaderV3{..} -> let Flag r _ = flag
+                      in Packet (header { flag = Flag r a}) body
+       _ -> error "setPrivAuth: bad version "
 
+setRid :: RequestId -> Packet -> Packet
+setRid r Packet{..} = 
+    let p@PDU{..} = pdu body
+    in Packet header (body { pdu = p { request = request { rid = r }}})
 
-fromASN1Request :: [ASN1] -> Either String ((Request, [ASN1]), [ASN1])
-fromASN1Request asn = flip runParseASN1State asn $ do
-        Start container <- getNext
-        IntVal rid <- getNext
-        IntVal es <- getNext
-        IntVal ei <- getNext
-        x <- getNextContainer Sequence
-        End container' <- getNext
-        case (container == container', container) of
-             (True, Container Context 0) -> return (GetRequest rid es ei, x)
-             (True, Container Context 1) -> return (GetNextRequest rid es ei, x)
-             (True, Container Context 2) -> return (GetResponse rid es ei, x)
-             (True, Container Context 3) -> return (SetRequest rid es ei, x)
-             (True, Container Context 5) -> return (GetBulk rid es ei, x)
-             _ -> error "not inplemented or bad sequence"
+setRequest :: Request -> Packet -> Packet
+setRequest r Packet{..} = 
+    let p@PDU{..} = pdu body
+    in Packet header (body { pdu = p { request = r }})
 
-instance ASN1Object SnmpData where
-    toASN1 (SnmpData xs) ys = foldr toA [] xs ++ ys
-      where 
-      toA ::(OID,SnmpType) -> [ASN1] -> [ASN1]
-      toA (o, v) zs = [Start Sequence , OID o] ++ toASN1 v (End Sequence : zs)
-    fromASN1 asn = flip runParseASN1State asn $ do
-        xs <- getMany $ do
-               Start Sequence <- getNext
-               OID x <- getNext
-               v <-  getObject
-               End Sequence <- getNext
-               return (x, v)
-        return $ SnmpData xs
+setCommunity :: Community -> Packet -> Packet
+setCommunity c Packet{..} =
+    case header of
+         HeaderV2{..} -> Packet ( header { community = c } ) body
+         _ -> error "setCommunity: bad version "
 
+setPDU :: PDU -> Packet -> Packet
+setPDU p Packet{..} = Packet header (body { pdu = p })
 
-instance ASN1Object PDU where
-    toASN1 (PDU r sd) xs = toASN1 r (toASN1 sd []) ++  xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        r <- getObject 
-        sd <- getObject
-        return $ PDU r sd
+setUserName :: ByteString -> Packet -> Packet
+setUserName u Packet{..} = 
+    case header of
+         HeaderV3{..} -> let s@SecurityParameter{..} = securityParameter
+                        in Packet (header { securityParameter = s { userName = u }}) body
+         _ -> error "setUserName: bad version "
 
-instance ASN1Object SnmpPacket where
-    toASN1 (SnmpPacket sv c pdu) _ = Start Sequence :( toASN1 sv . toASN1 c . toASN1 pdu $ [End Sequence])
-    fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
-        sv <- getObject
-        c <- getObject
-        pdu <- getObject
-        return $ SnmpPacket sv c pdu
+setAuthenticationParameters :: ByteString -> Packet -> Packet
+setAuthenticationParameters p Packet{..} = 
+    case header of
+         HeaderV3{..} -> let s@SecurityParameter{..} = securityParameter
+                        in Packet (header { securityParameter = s { authenticationParameters = p }}) body
+         _ -> error "setAuthenticationParameters: bad version "
 
-class Pack a where
-    encode :: a -> ByteString
-    decode :: ByteString -> a
+setFlag :: Flag -> Packet -> Packet
+setFlag f Packet{..} = 
+    case header of
+         HeaderV3{..} -> Packet (header { flag = f }) body
+         _ -> error "setFlag: bad version " 
 
-instance Pack SnmpPacket where
-    encode s = toStrict $ encodeASN1 DER $ toASN1 s []
-    decode = toB 
+class Construct a where
+    initial :: Version -> a
 
-toB :: ByteString -> SnmpPacket
-toB bs = let a = fromASN1 <$> decodeASN1 DER (fromStrict bs)
-         in case a of
-                 Right (Right (r, _)) -> r
-                 _ -> error "bad packet"
+instance Construct Packet where
+    initial Version3 = Packet (initial Version3) (initial Version3)
+    initial v = Packet (initial v) (initial v)
 
+instance Construct Header where
+    initial Version3 = HeaderV3 Version3 (ID 0) (MaxSize 65007) (Flag False NoAuthNoPriv) UserBasedSecurityModel (initial Version3)
+    initial v = HeaderV2 v (Community "")
+
+instance Construct VersionedPDU where
+    initial Version3 = ScopedPDU (ContextEngineID "") (ContextName "") (initial Version3)
+    initial _ = SimplePDU (initial Version3)
+
+instance Construct SecurityParameter where
+    initial Version3 = SecurityParameter "" 0 0 "" "" ""
+    initial _ = error "SecurityParameter: bad construct"
+
+instance Construct PDU where
+    initial _ = PDU (GetRequest 0 0 0) mempty
