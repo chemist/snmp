@@ -28,15 +28,14 @@ import Data.Monoid ((<>), mempty)
 import Data.Bits (xor)
 import Data.Word (Word8)
 import Control.Exception 
-import Control.Lens
 import Debug.Trace
 
 import Network.Protocol.Snmp
 import Network.Snmp.Client.Types
 import Network.Snmp.Client.Internal 
 
-v3 :: V3Packet 
-v3 = setVersion Version3 $ mempty
+v3 :: Packet 
+v3 = initial Version3 
 
 clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> ByteString -> AuthType -> PrivType -> IO Client
 clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
@@ -44,7 +43,7 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
     ref <- trace "init rid" $ newIORef 1000000
     let 
         newPacket x = ( setMsgId x  
-                      . setMaxSize (MsgMaxSize 65007) 
+                      . setMaxSize (MaxSize 65007) 
                       . setReportable False  
                       . setPrivAuth AuthNoPriv  
                       . setRid 1000000 
@@ -52,15 +51,16 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
         get' oids = withSocketsDo $ do
             rid <- succRequestId ref
             -- print (toASN1 (getrequest rid oids) [])
-            sendAll socket $ encode $ newPacket (MsgID rid) 
-            putStr . show $ newPacket (MsgID rid) 
-            resp <- decode <$> recv socket 1500 :: IO V3Packet
-            let flag = (setReportable True) . (setPrivAuth sequrityLevel) 
+            sendAll socket $ encode $ newPacket (ID rid) 
+            putStr . show $ newPacket (ID rid) 
+            resp <- decode <$> recv socket 1500 :: IO Packet
+            let  
                 full = ( (setReportable True) 
                        . (setPrivAuth sequrityLevel) 
                        . (setUserName sequrityName)  
                        . (setAuthenticationParameters cleanPass)  
-                       . (setPDU (PDU (GetRequest (getRid resp - 1) 0 0) (Suite $ map (\x -> Coupla x Zero) oids))) 
+                       . (setRequest (GetRequest (getRid resp - 1) 0 0))
+                       . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
                        ) resp
             print "second full"
             putStr . show $ full
@@ -80,15 +80,15 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
       , close = trace "close socket" $ NS.close socket
       }
 
-signPacket :: ByteString -> V3Packet -> V3Packet
+signPacket :: ByteString -> Packet -> Packet
 signPacket = setAuthenticationParameters
   
-nextMsg :: MsgID -> MsgID
-nextMsg (MsgID x) = MsgID (pred x)
+nextMsg :: ID -> ID
+nextMsg (ID x) = ID (pred x)
 
 returnResult3 :: NS.Socket -> Int -> IO Suite
 returnResult3 socket timeout = do
-    result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO V3Packet)
+    result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO Packet)
     case result of
          Right resp -> do
              when (0 /= getErrorStatus resp ) $ throwIO $ ServerException $ getErrorStatus resp
@@ -155,7 +155,7 @@ step2 au =
       k2 = K2 . BL.pack . map (uncurry xor) $ zip (BL.unpack ex) opad
   in (k1, k2)
 
-makeSign :: AuthKey -> V3Packet -> ByteString
+makeSign :: AuthKey -> Packet -> ByteString
 makeSign authKey p = 
   let (K1 k1, K2 k2) = step2 authKey
       packetAsBin = encode p

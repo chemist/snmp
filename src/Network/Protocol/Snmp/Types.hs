@@ -1,10 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
 module Network.Protocol.Snmp.Types 
 ( Value(..)
-, OID(..)
+, OID
 , Pack(..)
 , PDU(..)
 , Suite(..)
@@ -14,15 +15,18 @@ module Network.Protocol.Snmp.Types
 , ClientException(..) 
 , Version(..)
 , Header(..)
-, SnmpPacket(..)
-, body
-, header
-, version
-, headerData
-, rid
-, request
-, suite
-, es
+, Packet(..)
+, Community(..)
+, ID(..)
+, MaxSize(..)
+, Flag(..)
+, SecurityModel(..)
+, SecurityParameter(..)
+, Reportable
+, PrivAuth(..)
+, VersionedPDU(..)
+, ContextEngineID(..)
+, ContextName(..)
 )
 where
 
@@ -40,7 +44,6 @@ import Data.Time
 import Data.Monoid
 import Control.Exception
 import Data.Typeable
-import Control.Lens hiding (Context)
 import Debug.Trace 
 
 data Value = Simple ASN1
@@ -109,79 +112,298 @@ instance Monoid Version where
     mempty = Version1
     _ `mappend` x = x
 
-data Header a = Header 
-  { _version :: Version 
-  , _headerData :: a
+newtype Community = Community ByteString deriving (Show, Eq)
+
+instance Monoid Community where
+    mempty = Community ""
+    Community x `mappend` Community y = Community (x <> y)
+
+instance ASN1Object Community where
+    toASN1 (Community x) xs = OctetString x : xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        OctetString x <- getNext
+        return $ Community x
+
+-- Message Identifier (like RequestId in PDU)
+newtype ID = ID Integer deriving (Show, Eq)
+
+deriving instance Monoid ID
+
+-- Message max size must be > 484
+newtype MaxSize = MaxSize Integer deriving (Show, Eq)
+
+deriving instance Monoid MaxSize
+
+data PrivAuth = NoAuthNoPriv | AuthNoPriv | AuthPriv deriving (Show, Eq)
+
+instance Monoid PrivAuth where
+    mempty = NoAuthNoPriv
+    mappend _ x = x
+
+type Reportable = Bool
+
+data Flag = Flag Reportable PrivAuth  deriving (Show, Eq)
+
+instance Monoid Flag where
+    mempty = Flag False mempty
+    mappend (Flag True x) (Flag _ y) = Flag True (x <> y)
+    mappend (Flag _ x) (Flag True y) = Flag True (x <> y)
+    mappend (Flag False x) (Flag False y) = Flag True (x <> y)
+
+data SecurityModel = UserBasedSecurityModel deriving (Show, Eq)
+
+instance Monoid SecurityModel where
+    mempty = UserBasedSecurityModel
+    mappend _ _ = UserBasedSecurityModel
+
+data SecurityParameter = SecurityParameter 
+  { authoritiveEngineId :: ByteString
+  , authoritiveEngineBoots :: Integer
+  , authoritiveEngineTime :: Integer
+  , userName :: ByteString
+  , authenticationParameters :: ByteString
+  , privacyParameters :: ByteString
+  }
+  deriving (Eq)
+
+instance Show SecurityParameter where
+    show msg = "SecurityParameter:\n\t\tAuthoritiveEngineId: " 
+       ++ show (authoritiveEngineId msg )
+       ++ "\n\t\tAuthoritiveEngineBoots: " ++ show (authoritiveEngineBoots msg )
+       ++ "\n\t\tAuthoritiveEngineTime: " ++ show (authoritiveEngineTime msg )
+       ++ "\n\t\tUserName: " ++ show (userName msg )
+       ++ "\n\t\tAuthenticationParameters: " ++ show (authenticationParameters msg )
+       ++ "\n\t\tPrivacyParameters: " ++ show (privacyParameters msg )
+
+
+instance Monoid Integer where
+    mempty = 0
+    mappend = (+)
+
+instance Monoid SecurityParameter where
+    mempty = SecurityParameter "" 0 0 "" "" ""
+    mappend (SecurityParameter a0 b0 c0 d0 e0 f0) 
+            (SecurityParameter a1 b1 c1 d1 e1 f1) 
+            = SecurityParameter (a0 <> a1) (b0 <> b1) (c0 <> c1) (d0 <> d1) (e0 <> e1) (f0 <> f1)
+
+data Header = HeaderV2 
+  { version :: Version 
+  , community  :: Community
+  }         | HeaderV3 
+  { version :: Version
+  , iD :: ID 
+  , maXSize :: MaxSize
+  , flag :: Flag 
+  , securityModel :: SecurityModel 
+  , securityParameter :: SecurityParameter
   } deriving (Eq)
 
-instance Monoid a => Monoid (Header a) where
-    mempty = Header mempty mempty
-    Header a0 b0 `mappend` Header a1 b1 = Header (a0 <> a1) (b0 <> b1)
+instance Show Header where
+    show hd | version hd == Version3 = "\n  version: " ++ show (version hd) ++ "\n  " 
+                                                      ++ show (iD hd)  ++ "\n  "
+                                                      ++ show (maXSize hd) ++ "\n  "
+                                                      ++ show (flag hd) ++ "\n  "
+                                                      ++ show (securityModel hd) ++ "\n  "
+                                                      ++ show (securityParameter hd) 
 
-instance Show a => Show (Header a) where
-    show (Header v a) = "\n  version: " ++ show v ++ "\n  " ++ show a
+instance ASN1Object ID where
+    toASN1 (ID x) xs = IntVal x : xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        IntVal x <- getNext
+        return $ ID x
 
-instance ASN1Object a => ASN1Object (Header a) where
-    toASN1 (Header Version1 x) xs = IntVal 0 : toASN1 x xs
-    toASN1 (Header Version2 x) xs = IntVal 1 : toASN1 x xs
-    toASN1 (Header Version3 x) xs = IntVal 3 : toASN1 x xs
+instance ASN1Object MaxSize where
+    toASN1 (MaxSize x) xs = IntVal x : xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        IntVal x <- getNext
+        return $ MaxSize x
+
+instance ASN1Object Flag where
+    toASN1 (Flag r pa) xs = let zero = zeroBits :: Word8
+                                reportable = if r then setBit zero 0 else zero
+                                privauth = case pa of
+                                                NoAuthNoPriv -> zero
+                                                AuthNoPriv -> setBit zero 2
+                                                AuthPriv -> setBit zero 1 .|. setBit zero 2
+                                flag = reportable .|. privauth
+                            in OctetString (B.pack [flag]) : xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        OctetString x <- getNext
+        let [w] = B.unpack x
+        return $ case (testBit w 1, testBit w 2) of
+                      (True, True) -> Flag (testBit w 0) AuthPriv
+                      (False, False) -> Flag (testBit w 0) NoAuthNoPriv
+                      (False, True) -> Flag (testBit w 0) AuthNoPriv
+                      _ -> error "bad flag"
+
+
+instance ASN1Object SecurityModel where
+    toASN1 UserBasedSecurityModel xs = IntVal 3 : xs
     fromASN1 asn = flip runParseASN1State asn $ do
         IntVal x <- getNext
         case x of
-             0 -> Header Version1 <$> getObject
-             1 -> Header Version2 <$> getObject
-             3 -> Header Version3 <$> getObject
+             3 -> return UserBasedSecurityModel
+             _ -> error "other security model"
 
-data SnmpPacket a b = SnmpPacket 
-  { _header :: a
-  , _body :: b 
+instance ASN1Object SecurityParameter where
+    toASN1 SecurityParameter{..} xs = OctetString (encodeASN1' DER
+      [ Start Sequence
+      ,   OctetString authoritiveEngineId 
+      ,   IntVal authoritiveEngineBoots 
+      ,   IntVal authoritiveEngineTime 
+      ,   OctetString userName 
+      ,   OctetString authenticationParameters 
+      ,   OctetString privacyParameters 
+      , End Sequence
+      ]) : xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        OctetString packed <- getNext
+        let r = case decodeASN1' DER packed of
+             Left e -> error $ "cant unpack msgSecurity parameter " ++ show e
+             Right asn' -> parseMsgSecurityParameter asn'
+        case r of
+             Left e -> error $ "cant parse msgSecurity parameter" ++ show e
+             Right r -> return r
+
+parseMsgSecurityParameter :: [ASN1] -> Either String SecurityParameter
+parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
+     Start Sequence <- getNext
+     OctetString msgAuthoritiveEngineId <- getNext
+     IntVal msgAuthoritiveEngineBoots <- getNext
+     IntVal msgAuthoritiveEngineTime <- getNext
+     OctetString msgUserName <- getNext
+     OctetString msgAuthenticationParameters <- getNext
+     OctetString msgPrivacyParameters <- getNext
+     End Sequence <- getNext
+     return $ SecurityParameter msgAuthoritiveEngineId msgAuthoritiveEngineBoots msgAuthoritiveEngineTime msgUserName msgAuthenticationParameters msgPrivacyParameters 
+
+
+instance ASN1Object Header where
+    toASN1 (HeaderV2 Version3 _) _ = error "bad header data"
+    toASN1 (HeaderV2 Version1 x) xs = IntVal 0 : toASN1 x xs
+    toASN1 (HeaderV2 Version2 x) xs = IntVal 1 : toASN1 x xs
+    toASN1 HeaderV3{..} xs = IntVal 3 : ( 
+        Start Sequence : toASN1 iD (toASN1 maXSize (toASN1 flag (toASN1 securityModel [End Sequence])))) ++ toASN1 securityParameter xs
+    fromASN1 asn = flip runParseASN1State asn $ do
+        IntVal x <- getNext
+        case x of
+             0 -> HeaderV2 Version1 <$> getObject
+             1 -> HeaderV2 Version2 <$> getObject
+             3 -> getV3
+             _ -> error "unknown version tag"
+        where
+          getV3 = do
+              Start Sequence <- getNext
+              i <- getObject
+              ms <- getObject
+              f <- getObject
+              sm <- getObject
+              End Sequence <- getNext
+              sp <- getObject
+              return $ HeaderV3 Version3 i ms f sm sp
+
+data Packet = Packet 
+  { header :: Header
+  , body :: VersionedPDU
   } deriving (Eq)
 
-instance (Monoid a, Monoid b) => Monoid (SnmpPacket a b) where
-    mempty = SnmpPacket mempty mempty
-    SnmpPacket a0 b0 `mappend` SnmpPacket a1 b1 = SnmpPacket (a0 <> a1) (b0 <> b1)
+newtype ContextEngineID = ContextEngineID ByteString deriving (Show, Eq)
 
-instance (Show a, Show b) => Show (SnmpPacket a b) where
-    show (SnmpPacket a b) = "snmp packet: \n  header: " ++ show a ++ "\n  pdu: " ++ show b
+deriving instance Monoid ContextEngineID
 
-instance (ASN1Object a, ASN1Object b, Show b, Show a) => ASN1Object (SnmpPacket a b) where
-    toASN1 (SnmpPacket header pdu) _ = 
-      Start Sequence : ( toASN1 header ( toASN1 pdu [End Sequence]))
+newtype ContextName = ContextName ByteString deriving (Show, Eq)
 
+deriving instance Monoid ContextName
+
+data VersionedPDU = SimplePDU
+  { pdu :: PDU
+  }               | ScopedPDU
+  { contextEngineId :: ContextEngineID
+  , contextName :: ContextName
+  , pdu :: PDU
+  } deriving (Eq, Show)
+
+data PDU = PDU { request :: Request, suite :: Suite } deriving (Show, Eq)
+
+instance ASN1Object VersionedPDU where
+    toASN1 (SimplePDU (PDU (GetRequest rid _ _    ) sd)) xs = (Start $ Container Context 0):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 0)] ++ xs
+    toASN1 (SimplePDU (PDU (GetNextRequest rid _ _) sd)) xs = (Start $ Container Context 1):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 1)] ++ xs
+    toASN1 (SimplePDU (PDU (GetResponse rid es ei ) sd)) xs = (Start $ Container Context 2):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 2)] ++ xs
+    toASN1 (SimplePDU (PDU (SetRequest rid _ _    ) sd)) xs = (Start $ Container Context 3):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 3)] ++ xs
+    toASN1 (SimplePDU (PDU (GetBulk rid es ei     ) sd)) xs = (Start $ Container Context 5):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
+    toASN1 (SimplePDU (PDU (Report rid es ei      ) sd)) xs = (Start $ Container Context 8):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 8)] ++ xs
+    toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs = 
+      [Start Sequence, OctetString x, OctetString y] ++ (toASN1 (SimplePDU pdu) (End Sequence :xs))
+    fromASN1 asn = flip runParseASN1State asn $ do
+        Start whatIs <- getNext
+        case whatIs of
+             Container Context n -> SimplePDU <$> simplePDU (Container Context n)
+             Sequence -> do
+                 OctetString x <- getNext
+                 OctetString y <- getNext
+                 Start s <- getNext
+                 p <- simplePDU s
+                 End Sequence <- getNext
+                 return $ ScopedPDU (ContextEngineID x) (ContextName y) p
+             _ -> error "bad VersionedPDU"
+
+simplePDU :: ASN1ConstructionType -> ParseASN1 PDU
+simplePDU (Container Context n) = do
+    IntVal rid <- getNext
+    IntVal es <- getNext
+    IntVal ei <- getNext
+    x <- getNextContainer Sequence 
+    End (Container Context _) <- getNext
+    let psuite = fromASN1 x
+    case (n, psuite) of
+         (0, Right (suite, _)) -> return $ PDU (GetRequest     rid es ei) suite
+         (1, Right (suite, _)) -> return $ PDU (GetNextRequest rid es ei) suite
+         (2, Right (suite, _)) -> return $ PDU (GetResponse    rid es ei) suite
+         (3, Right (suite, _)) -> return $ PDU (SetRequest     rid es ei) suite
+         (5, Right (suite, _)) -> return $ PDU (GetBulk        rid es ei) suite
+         (8, Right (suite, _)) -> return $ PDU (Report         rid es ei) suite
+         e -> error $ "cant parse PDU " ++ show e
+simplePDU _ = error "bad PDU"
+
+instance ASN1Object Packet where
+    toASN1 Packet{..} _ = Start Sequence : toASN1 header (toASN1 body [End Sequence])
     fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
         header <- getObject
-        pdu <- getObject
-        return $ SnmpPacket header pdu 
+        body <- getObject
+        return $ Packet header body
 
+instance Show Packet where
+    show Packet{..} = "snmp packet: \n  header: " ++ show header ++ "\n  pdu: " ++ show body
+  
 class Pack a where
     encode :: a -> ByteString
     decode :: ByteString -> a
 
-instance (ASN1Object a, ASN1Object b, Show b, Show a) => Pack (SnmpPacket a b) where
+instance Pack Packet where
     encode s = encodeASN1' DER $ toASN1 s []
     decode = toB 
 
-toB :: (ASN1Object a, ASN1Object b, Show b, Show a) => ByteString -> SnmpPacket a b
+toB :: ByteString -> Packet 
 toB bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
                  _ -> error "bad packet"
+                 --}
 
 type RequestId = Integer
 type ErrorStatus = Integer
 type ErrorIndex = Integer
 
-data Request = GetRequest { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
-             | GetNextRequest { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
-             | GetResponse { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
-             | SetRequest { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
-             | GetBulk { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
-             | Inform
-             | V2Trap
-             | Report { _rid :: RequestId, _es :: ErrorStatus, _ei :: ErrorIndex }
+data Request = GetRequest     { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
+             | GetNextRequest { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
+             | GetResponse    { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
+             | SetRequest     { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
+             | GetBulk        { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
+             | Inform         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
+             | V2Trap         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
+             | Report         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
              deriving (Show, Eq)
 
-data PDU = PDU { _request :: Request, _suite :: Suite } deriving (Show, Eq)
 
 instance Monoid PDU where
     mempty = PDU (GetRequest 0 0 0) mempty
@@ -199,31 +421,6 @@ instance Show Suite where
 
 oidToString :: OID -> String
 oidToString xs = foldr1 (\x y -> x ++ "." ++ y) $ map show xs
-
-instance ASN1Object PDU where
-    toASN1 (PDU (GetRequest rid _ _    ) sd) xs = (Start $ Container Context 0):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 0)] ++ xs
-    toASN1 (PDU (GetNextRequest rid _ _) sd) xs = (Start $ Container Context 1):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 1)] ++ xs
-    toASN1 (PDU (GetResponse rid es ei ) sd) xs = (Start $ Container Context 2):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 2)] ++ xs
-    toASN1 (PDU (SetRequest rid _ _    ) sd) xs = (Start $ Container Context 3):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 3)] ++ xs
-    toASN1 (PDU (GetBulk rid es ei     ) sd) xs = (Start $ Container Context 5):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
-    toASN1 (PDU (Report rid es ei      ) sd) xs = (Start $ Container Context 8):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 8)] ++ xs
-
-    fromASN1 asn = flip runParseASN1State asn $ do
-        Start container <- getNext
-        IntVal rid <- getNext
-        IntVal es <- getNext
-        IntVal ei <- getNext
-        x <- getNextContainer Sequence
-        End container <- getNext
-        let psuite = fromASN1 x
-        case (container, psuite) of
-             (Container Context 0, Right (suite, _)) -> return $ PDU (GetRequest     rid es ei) suite
-             (Container Context 1, Right (suite, _)) -> return $ PDU (GetNextRequest rid es ei) suite
-             (Container Context 2, Right (suite, _)) -> return $ PDU (GetResponse    rid es ei) suite
-             (Container Context 3, Right (suite, _)) -> return $ PDU (SetRequest     rid es ei) suite
-             (Container Context 5, Right (suite, _)) -> return $ PDU (GetBulk        rid es ei) suite
-             (Container Context 8, Right (suite, _)) -> return $ PDU (Report         rid es ei) suite
-             e -> error $ "cant parse PDU " ++ show e
 
 instance ASN1Object Suite where
     toASN1 (Suite xs) ys = foldr toA [] xs ++ ys
@@ -322,8 +519,3 @@ intOfBytes b
 uintOfBytes :: ByteString -> (Int, Integer)
 uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0 b)
 
-makeLenses ''Header 
-makeLenses ''SnmpPacket 
-makeLenses ''Request 
-makeLenses ''PDU 
-makeLenses ''Coupla 

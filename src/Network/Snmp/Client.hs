@@ -36,7 +36,6 @@ import Network.Snmp.Client.Types
 import Network.Snmp.Client.Internal
 import Network.Snmp.Client.Version2
 import Network.Snmp.Client.Version3
-import Control.Lens hiding (set)
 
 client :: Config -> IO Client
 client conf@ConfigV2{..} = clientV2 hostname 

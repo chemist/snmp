@@ -33,10 +33,10 @@ oi :: ByteString
 oi = ".1.3.6.1.2.1.1.9.1.2.1"
 
 showExample = do
-    firstRequest <- decode <$> BS.readFile "firstRequest" :: IO V3Packet
-    firstResponse <- decode <$> BS.readFile "firstResponse" :: IO V3Packet
-    secondRequest <- decode <$> BS.readFile "secondRequest" :: IO V3Packet
-    secondResponse <- decode <$> BS.readFile "secondResponse" :: IO V3Packet
+    firstRequest <- decode <$> BS.readFile "firstRequest" :: IO Packet
+    firstResponse <- decode <$> BS.readFile "firstResponse" :: IO Packet
+    secondRequest <- decode <$> BS.readFile "secondRequest" :: IO Packet
+    secondResponse <- decode <$> BS.readFile "secondResponse" :: IO Packet
     print "first"
     putStr . show $ firstRequest
     putStr . show $ firstResponse
@@ -44,7 +44,7 @@ showExample = do
     putStr . show $ secondRequest
     putStr . show $ secondResponse
 
-main = client3
+main = client2
 
 conf2 :: Config
 conf2 = (defConfig Version2) { hostname = "salt" 

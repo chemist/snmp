@@ -19,33 +19,40 @@ import Network.Protocol.Snmp
 import Network.Snmp.Client.Internal
 import Network.Snmp.Client.Types
 
+v2 :: Packet
+v2 = initial Version2
+
 returnResult2 :: NS.Socket -> Int -> IO Suite
 returnResult2 socket timeout = do
-    result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO V2Packet)
+    result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO Packet)
     case result of
-         Right (SnmpPacket _ (PDU (GetResponse rid e ie) d)) -> do
-             when (e /= 0) $ throwIO $ ServerException e
-             return d
+         Right packet -> do
+             when (getErrorStatus packet /= 0) $ throwIO $ ServerException $ getErrorStatus packet
+             return $ getSuite packet
          Left _ -> throwIO TimeoutException            
+
+setRCS :: Community -> OIDS -> Packet -> Packet
+setRCS c o = setCommunity c . setSuite (Suite $ map (\x -> Coupla x Zero) o)
 
 clientV2 :: Hostname -> Port -> Int -> Community -> IO Client
 clientV2 hostname port timeout community = do
     socket <- trace "open socket" $ makeSocket hostname port 
     ref <- trace "init rid" $ newIORef 0
     let 
+        req oids = setRCS community oids v2
         get' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket (Header Version2 community) (PDU (GetRequest rid 0 0) (Suite $ map (\x -> Coupla x Zero) oids)))
+            sendAll socket $ encode $ setRequest (GetRequest rid 0 0) (req oids) 
             returnResult2 socket timeout
 
         bulkget' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket (Header Version2 community) (PDU (GetBulk rid 0 10) (Suite $ map (\x -> Coupla x Zero) oids)))
+            sendAll socket $ encode $ setRequest (GetBulk rid 0 10) (req oids)
             returnResult2 socket timeout
 
         getnext' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket (Header Version2 community) (PDU (GetNextRequest rid 0 0) (Suite $ map (\x -> Coupla x Zero) oids)))
+            sendAll socket $ encode $ setRequest (GetNextRequest rid 0 0) (req oids)
             returnResult2 socket timeout
 
         walk' oids base accumulator 
@@ -77,7 +84,7 @@ clientV2 hostname port timeout community = do
                     (True, _) -> return $ accumulator <> filtered first
         set' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode (SnmpPacket (Header Version2 community) (PDU (SetRequest rid 0 0) oids))
+            sendAll socket $ encode $ setRequest (SetRequest rid 0 0) . setCommunity community . setSuite oids $ v2
             returnResult2 socket timeout
 
     return $ Client 

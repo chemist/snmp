@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Network.Protocol.Snmp 
 -- ^ Types
-( PDU(..)
+( PDU
 , Request(..)
 , Value(..)
 , ClientException(..)
@@ -10,21 +11,20 @@ module Network.Protocol.Snmp
 , Coupla(..)
 , Pack(..)
 , Version(..)
-, SnmpPacket(..)
-, Header(..)
-, RequestId(..)
+, Packet
+, Header
+, RequestId
 -- ^ Second version
 , Community(..)
 -- ^ Third version
-, HeaderData
 , ContextEngineID(..)
 , ContextName(..)
-, ScopedPDU(..)
-, MsgID(..)
-, MsgFlag
-, MsgMaxSize(..)
-, MsgSecurityModel
-, MsgSecurityParameter
+, VersionedPDU
+, ID(..)
+, Flag
+, MaxSize(..)
+, SecurityModel
+, SecurityParameter
 , Reportable
 , PrivAuth(..)
 -- ^ setters
@@ -38,87 +38,132 @@ module Network.Protocol.Snmp
 , setUserName
 , setAuthenticationParameters
 , setFlag
--- ^ getters
+, setCommunity
+, setSuite
+, setRequest
+-- -- ^ getters
 , getRid
 , getEngineId
+, getVersion
 , getErrorStatus
 , getSuite
 -- ^ aliases
-, V2Packet
-, V3Packet
 , OIDS
+-- ^ helpers
+, initial
 ) 
 where
 
 import Network.Protocol.Snmp.Types
-import Network.Protocol.Snmp.Version2
-import Network.Protocol.Snmp.Version3 
-import Control.Lens
 import Data.ByteString (ByteString)
-
-type V2Packet = SnmpPacket (Header Community) PDU
-type V3Packet = SnmpPacket (Header HeaderData) ScopedPDU
+import Data.Monoid (mempty)
 
 type OIDS = [OID]
 
-getEngineId :: V3Packet -> ContextEngineID
-getEngineId v = v ^. body . contextEngineId
+setVersion :: Version -> Packet -> Packet
+setVersion v Packet{..} = case header of
+                               HeaderV2{..} -> Packet (header { version = v }) body
+                               HeaderV3{..} -> Packet (header { version = v }) body
 
-getVersion :: SnmpPacket (Header a0) b0 -> Version
-getVersion = (^. header . version)
+getEngineId :: Packet -> ContextEngineID
+getEngineId Packet{..} = contextEngineId body 
 
-getErrorStatus :: V3Packet -> Integer
-getErrorStatus v = v ^. body . pdu . request . es
+getVersion :: Packet -> Version
+getVersion Packet{..} = version header
 
-getRid :: V3Packet -> Integer
-getRid v = v ^. body . pdu . request . rid 
+getErrorStatus :: Packet -> Integer
+getErrorStatus Packet{..} = es . request . pdu $ body
 
-getSuiteFromPdu :: PDU -> Suite
-getSuiteFromPdu = (^. suite)
+getRid :: Packet -> Integer
+getRid Packet{..} = rid . request . pdu $ body
 
-getBody :: SnmpPacket a b -> b
-getBody = (^. body)
+getSuite :: Packet -> Suite
+getSuite Packet{..} = suite . pdu $ body
 
-class HasPDU a where
-    getPDU :: a -> PDU
+setSuite :: Suite -> Packet -> Packet 
+setSuite s Packet{..} = Packet header (body { pdu = (pdu body) { suite = s }})
 
-instance HasPDU ScopedPDU where
-    getPDU (ScopedPDU _ _ p) = p
+setMaxSize :: MaxSize -> Packet -> Packet
+setMaxSize m Packet{..} = case header of
+                               HeaderV3{..} -> Packet (header { maXSize = m }) body
+                               _ -> error "setMaxSize: bad version "
 
-instance HasPDU PDU where
-    getPDU = id
+setMsgId :: ID -> Packet -> Packet
+setMsgId i Packet{..} = case header of
+                             HeaderV3{..} -> Packet (header { iD = i }) body
+                             _ -> error "setMsgId: bad version "
 
-getSuite :: HasPDU b => SnmpPacket a b -> Suite
-getSuite x = getSuiteFromPdu $ getPDU (getBody x)
+setReportable :: Reportable -> Packet -> Packet
+setReportable r Packet{..} = 
+    case header of
+       HeaderV3{..} -> let Flag _ a = flag
+                      in Packet (header { flag = Flag r a }) body
+       _ -> error "setReportable: bad version "
 
-setMaxSize :: MsgMaxSize -> V3Packet -> V3Packet
-setMaxSize = (header . headerData . msgMaxSize .~ )
+setPrivAuth :: PrivAuth -> Packet -> Packet
+setPrivAuth a Packet{..} = 
+   case header of
+       HeaderV3{..} -> let Flag r _ = flag
+                      in Packet (header { flag = Flag r a}) body
+       _ -> error "setPrivAuth: bad version "
 
-setMsgId :: MsgID -> V3Packet -> V3Packet
-setMsgId = (header . headerData . msgId .~ )
+setRid :: RequestId -> Packet -> Packet
+setRid r Packet{..} = 
+    let p@PDU{..} = pdu body
+    in Packet header (body { pdu = p { request = request { rid = r }}})
 
-setReportable :: Reportable -> V3Packet -> V3Packet
-setReportable = (header . headerData . msgFlag . reportable .~ )
+setRequest :: Request -> Packet -> Packet
+setRequest r Packet{..} = 
+    let p@PDU{..} = pdu body
+    in Packet header (body { pdu = p { request = r }})
 
-setPrivAuth :: PrivAuth -> V3Packet -> V3Packet
-setPrivAuth = (header . headerData . msgFlag . privAuth .~)
+setCommunity :: Community -> Packet -> Packet
+setCommunity c Packet{..} =
+    case header of
+         HeaderV2{..} -> Packet ( header { community = c } ) body
+         _ -> error "setCommunity: bad version "
 
--- setRid :: RequestId -> SnmpPacket (Header HeaderData) b0 -> SnmpPacket (Header HeaderData) b0
-setRid = (body . pdu . request . rid .~)
+setPDU :: PDU -> Packet -> Packet
+setPDU p Packet{..} = Packet header (body { pdu = p })
 
-setVersion :: Version -> SnmpPacket (Header HeaderData) b0 -> SnmpPacket (Header HeaderData) b0
-setVersion = (header . version .~ )
+setUserName :: ByteString -> Packet -> Packet
+setUserName u Packet{..} = 
+    case header of
+         HeaderV3{..} -> let s@SecurityParameter{..} = securityParameter
+                        in Packet (header { securityParameter = s { userName = u }}) body
+         _ -> error "setUserName: bad version "
 
-setPDU = (body . pdu .~)
+setAuthenticationParameters :: ByteString -> Packet -> Packet
+setAuthenticationParameters p Packet{..} = 
+    case header of
+         HeaderV3{..} -> let s@SecurityParameter{..} = securityParameter
+                        in Packet (header { securityParameter = s { authenticationParameters = p }}) body
+         _ -> error "setAuthenticationParameters: bad version "
 
-setUserName :: ByteString -> V3Packet -> V3Packet
-setUserName = (header . headerData . msgSecurityParameter . msgUserName .~)
+setFlag :: Flag -> Packet -> Packet
+setFlag f Packet{..} = 
+    case header of
+         HeaderV3{..} -> Packet (header { flag = f }) body
+         _ -> error "setFlag: bad version " 
 
-setAuthenticationParameters :: ByteString -> V3Packet -> V3Packet
-setAuthenticationParameters = (header . headerData . msgSecurityParameter . msgAuthenticationParameters .~)
+class Construct a where
+    initial :: Version -> a
 
-setFlag :: MsgFlag -> V3Packet -> V3Packet
-setFlag = (header . headerData . msgFlag .~)
+instance Construct Packet where
+    initial Version3 = Packet (initial Version3) (initial Version3)
+    initial v = Packet (initial v) (initial v)
 
+instance Construct Header where
+    initial Version3 = HeaderV3 Version3 (ID 0) (MaxSize 65007) (Flag False NoAuthNoPriv) UserBasedSecurityModel (initial Version3)
+    initial v = HeaderV2 v (Community "")
 
+instance Construct VersionedPDU where
+    initial Version3 = ScopedPDU (ContextEngineID "") (ContextName "") (initial Version3)
+    initial _ = SimplePDU (initial Version3)
 
+instance Construct SecurityParameter where
+    initial Version3 = SecurityParameter "" 0 0 "" "" ""
+    initial _ = error "SecurityParameter: bad construct"
+
+instance Construct PDU where
+    initial _ = PDU (GetRequest 0 0 0) mempty
