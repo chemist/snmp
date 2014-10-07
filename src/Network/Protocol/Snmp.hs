@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 module Network.Protocol.Snmp 
 -- ^ Types
 ( PDU
@@ -19,7 +18,6 @@ module Network.Protocol.Snmp
 -- ^ Third version
 , ContextEngineID(..)
 , ContextName(..)
-, VersionedPDU
 , ID(..)
 , Flag
 , MaxSize(..)
@@ -28,8 +26,7 @@ module Network.Protocol.Snmp
 , Reportable
 , PrivAuth(..)
 -- ^ setters
-, setVersion
-, setMsgId
+, setID
 , setMaxSize
 , setReportable
 , setRid
@@ -51,119 +48,64 @@ module Network.Protocol.Snmp
 , OIDS
 -- ^ helpers
 , initial
+, newPacket
 ) 
 where
 
-import Network.Protocol.Snmp.Types
+import Network.Protocol.Snmp.Types hiding (setID, setMaxSize, setCommunity)
+import qualified Network.Protocol.Snmp.Types as T
 import Data.ByteString (ByteString)
 import Data.Monoid (mempty)
 
 type OIDS = [OID]
 
-setVersion :: Version -> Packet -> Packet
-setVersion v Packet{..} = case header of
-                               HeaderV2{..} -> Packet (header { version = v }) body
-                               HeaderV3{..} -> Packet (header { version = v }) body
+setID :: ID -> Packet -> Packet 
+setID x p = 
+  let header = getHeader p :: Header V3
+      newHeader = T.setID x header
+  in setHeader newHeader p
+
+setMaxSize :: MaxSize -> Packet -> Packet 
+setMaxSize x p = 
+  let header = getHeader p :: Header V3
+      newHeader = T.setMaxSize x header
+  in setHeader newHeader p 
+
+setCommunity :: Community -> Packet -> Packet 
+setCommunity x p = 
+  let header = getHeader p :: Header V2
+      newHeader = T.setCommunity x header
+  in setHeader newHeader p
 
 getEngineId :: Packet -> ContextEngineID
-getEngineId Packet{..} = contextEngineId body 
-
-getVersion :: Packet -> Version
-getVersion Packet{..} = version header
-
-getErrorStatus :: Packet -> Integer
-getErrorStatus Packet{..} = es . request . pdu $ body
-
-getRid :: Packet -> Integer
-getRid Packet{..} = rid . request . pdu $ body
-
-getSuite :: Packet -> Suite
-getSuite Packet{..} = suite . pdu $ body
-
-setSuite :: Suite -> Packet -> Packet 
-setSuite s Packet{..} = Packet header (body { pdu = (pdu body) { suite = s }})
-
-setMaxSize :: MaxSize -> Packet -> Packet
-setMaxSize m Packet{..} = case header of
-                               HeaderV3{..} -> Packet (header { maXSize = m }) body
-                               _ -> error "setMaxSize: bad version "
-
-setMsgId :: ID -> Packet -> Packet
-setMsgId i Packet{..} = case header of
-                             HeaderV3{..} -> Packet (header { iD = i }) body
-                             _ -> error "setMsgId: bad version "
+getEngineId p = getContextEngineID $ (getPDU p :: PDU V3)
 
 setReportable :: Reportable -> Packet -> Packet
-setReportable r Packet{..} = 
-    case header of
-       HeaderV3{..} -> let Flag _ a = flag
-                      in Packet (header { flag = Flag r a }) body
-       _ -> error "setReportable: bad version "
+setReportable r p = 
+  let header = getHeader p :: Header V3
+      Flag _ a = getFlag header
+      newHeader = setFlag (Flag r a) header
+  in setHeader newHeader p
 
 setPrivAuth :: PrivAuth -> Packet -> Packet
-setPrivAuth a Packet{..} = 
-   case header of
-       HeaderV3{..} -> let Flag r _ = flag
-                      in Packet (header { flag = Flag r a}) body
-       _ -> error "setPrivAuth: bad version "
+setPrivAuth x p = 
+  let header = getHeader p :: Header V3
+      Flag r _ = getFlag header
+      newHeader = setFlag (Flag r x) header
+  in setHeader newHeader p
 
-setRid :: RequestId -> Packet -> Packet
-setRid r Packet{..} = 
-    let p@PDU{..} = pdu body
-    in Packet header (body { pdu = p { request = request { rid = r }}})
+setUserName :: ByteString -> Packet -> Packet 
+setUserName x p = 
+  let header = getHeader p :: Header V3
+      sp = getSecurityParameter header
+      newHeader = setSecurityParameter (sp { userName = x }) header
+  in setHeader newHeader p
 
-setRequest :: Request -> Packet -> Packet
-setRequest r Packet{..} = 
-    let p@PDU{..} = pdu body
-    in Packet header (body { pdu = p { request = r }})
+setAuthenticationParameters :: ByteString -> Packet -> Packet 
+setAuthenticationParameters x p = 
+  let header = getHeader p :: Header V3
+      sp = getSecurityParameter header
+      newHeader = setSecurityParameter (sp { authenticationParameters = x }) header
+  in setHeader newHeader p
 
-setCommunity :: Community -> Packet -> Packet
-setCommunity c Packet{..} =
-    case header of
-         HeaderV2{..} -> Packet ( header { community = c } ) body
-         _ -> error "setCommunity: bad version "
 
-setPDU :: PDU -> Packet -> Packet
-setPDU p Packet{..} = Packet header (body { pdu = p })
-
-setUserName :: ByteString -> Packet -> Packet
-setUserName u Packet{..} = 
-    case header of
-         HeaderV3{..} -> let s@SecurityParameter{..} = securityParameter
-                        in Packet (header { securityParameter = s { userName = u }}) body
-         _ -> error "setUserName: bad version "
-
-setAuthenticationParameters :: ByteString -> Packet -> Packet
-setAuthenticationParameters p Packet{..} = 
-    case header of
-         HeaderV3{..} -> let s@SecurityParameter{..} = securityParameter
-                        in Packet (header { securityParameter = s { authenticationParameters = p }}) body
-         _ -> error "setAuthenticationParameters: bad version "
-
-setFlag :: Flag -> Packet -> Packet
-setFlag f Packet{..} = 
-    case header of
-         HeaderV3{..} -> Packet (header { flag = f }) body
-         _ -> error "setFlag: bad version " 
-
-class Construct a where
-    initial :: Version -> a
-
-instance Construct Packet where
-    initial Version3 = Packet (initial Version3) (initial Version3)
-    initial v = Packet (initial v) (initial v)
-
-instance Construct Header where
-    initial Version3 = HeaderV3 Version3 (ID 0) (MaxSize 65007) (Flag False NoAuthNoPriv) UserBasedSecurityModel (initial Version3)
-    initial v = HeaderV2 v (Community "")
-
-instance Construct VersionedPDU where
-    initial Version3 = ScopedPDU (ContextEngineID "") (ContextName "") (initial Version3)
-    initial _ = SimplePDU (initial Version3)
-
-instance Construct SecurityParameter where
-    initial Version3 = SecurityParameter "" 0 0 "" "" ""
-    initial _ = error "SecurityParameter: bad construct"
-
-instance Construct PDU where
-    initial _ = PDU (GetRequest 0 0 0) mempty

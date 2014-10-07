@@ -20,7 +20,7 @@ import Network.Snmp.Client.Internal
 import Network.Snmp.Client.Types
 
 v2 :: Packet
-v2 = initial Version2
+v2 = newPacket Version2
 
 returnResult2 :: NS.Socket -> Int -> IO Suite
 returnResult2 socket timeout = do

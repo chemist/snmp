@@ -35,24 +35,24 @@ import Network.Snmp.Client.Types
 import Network.Snmp.Client.Internal 
 
 v3 :: Packet 
-v3 = initial Version3 
+v3 = newPacket Version3 
 
 clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> ByteString -> AuthType -> PrivType -> IO Client
 clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
     socket <- trace "open socket" $ makeSocket hostname port 
     ref <- trace "init rid" $ newIORef 1000000
     let 
-        newPacket x = ( setMsgId x  
-                      . setMaxSize (MaxSize 65007) 
-                      . setReportable False  
-                      . setPrivAuth AuthNoPriv  
-                      . setRid 1000000 
-                      ) v3
+        packet x = ( setID x  
+                   . setMaxSize (MaxSize 65007) 
+                   . setReportable False  
+                   . setPrivAuth AuthNoPriv  
+                   . setRid 1000000 
+                   ) v3
         get' oids = withSocketsDo $ do
             rid <- succRequestId ref
             -- print (toASN1 (getrequest rid oids) [])
-            sendAll socket $ encode $ newPacket (ID rid) 
-            putStr . show $ newPacket (ID rid) 
+            sendAll socket $ encode $ packet (ID rid)
+            putStr . show $ packet (ID rid)
             resp <- decode <$> recv socket 1500 :: IO Packet
             let  
                 full = ( (setReportable True) 
