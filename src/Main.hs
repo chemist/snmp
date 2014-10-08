@@ -44,7 +44,7 @@ showExample = do
     putStr . show $ secondRequest
     putStr . show $ secondResponse
 
-main = client2
+main = client3
 
 conf2 :: Config
 conf2 = (defConfig Version2) { hostname = "salt" 

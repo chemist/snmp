@@ -20,7 +20,7 @@ import Network.Snmp.Client.Internal
 import Network.Snmp.Client.Types
 
 v2 :: Packet
-v2 = newPacket Version2
+v2 = initial Version2
 
 returnResult2 :: NS.Socket -> Int -> IO Suite
 returnResult2 socket timeout = do
@@ -32,7 +32,7 @@ returnResult2 socket timeout = do
          Left _ -> throwIO TimeoutException            
 
 setRCS :: Community -> OIDS -> Packet -> Packet
-setRCS c o = setCommunity c . setSuite (Suite $ map (\x -> Coupla x Zero) o)
+setRCS c o = setCommunityP c . setSuite (Suite $ map (\x -> Coupla x Zero) o)
 
 clientV2 :: Hostname -> Port -> Int -> Community -> IO Client
 clientV2 hostname port timeout community = do
@@ -84,7 +84,7 @@ clientV2 hostname port timeout community = do
                     (True, _) -> return $ accumulator <> filtered first
         set' oids = withSocketsDo $ do
             rid <- succRequestId ref
-            sendAll socket $ encode $ setRequest (SetRequest rid 0 0) . setCommunity community . setSuite oids $ v2
+            sendAll socket $ encode $ setRequest (SetRequest rid 0 0) . setCommunityP community . setSuite oids $ v2
             returnResult2 socket timeout
 
     return $ Client 

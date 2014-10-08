@@ -35,15 +35,15 @@ import Network.Snmp.Client.Types
 import Network.Snmp.Client.Internal 
 
 v3 :: Packet 
-v3 = newPacket Version3 
+v3 = initial Version3 
 
 clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> ByteString -> AuthType -> PrivType -> IO Client
 clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
     socket <- trace "open socket" $ makeSocket hostname port 
     ref <- trace "init rid" $ newIORef 1000000
     let 
-        packet x = ( setID x  
-                   . setMaxSize (MaxSize 65007) 
+        packet x = ( setIDP x  
+                   . setMaxSizeP (MaxSize 65007) 
                    . setReportable False  
                    . setPrivAuth AuthNoPriv  
                    . setRid 1000000 
