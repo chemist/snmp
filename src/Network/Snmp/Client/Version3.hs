@@ -16,7 +16,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Char8 as C
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async
-import Data.IORef (newIORef)
+import Data.IORef (newIORef, IORef, readIORef, atomicWriteIORef)
 import Control.Concurrent (threadDelay)
 import Control.Monad (when)
 import Data.ASN1.BinaryEncoding
@@ -40,35 +40,34 @@ v3 = initial Version3
 clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> ByteString -> AuthType -> PrivType -> IO Client
 clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
     socket <- trace "open socket" $ makeSocket hostname port 
-    ref <- trace "init rid" $ newIORef 1000000
+    uniqInteger <- uniqID
+    ref <- trace "init rid" $ newIORef uniqInteger
+    authCache <- newIORef Nothing
     let 
-        packet x = ( setIDP x  
+        packet x = ( setIDP (ID x) 
                    . setMaxSizeP (MaxSize 65007) 
                    . setReportable False  
                    . setPrivAuth AuthNoPriv  
-                   . setRid 1000000 
+                   . setRid x 
                    ) v3
         get' oids = withSocketsDo $ do
-            rid <- succRequestId ref
+            rid <- predCounter ref
             -- print (toASN1 (getrequest rid oids) [])
-            sendAll socket $ encode $ packet (ID rid)
-            putStr . show $ packet (ID rid)
+            sendAll socket $ encode $ packet rid
+            -- putStr . show $ packet rid
             resp <- decode <$> recv socket 1500 :: IO Packet
+            rid <- predCounter ref
             let  
                 full = ( (setReportable True) 
                        . (setPrivAuth sequrityLevel) 
                        . (setUserName sequrityName)  
                        . (setAuthenticationParameters cleanPass)  
-                       . (setRequest (GetRequest (getRid resp - 1) 0 0))
+                       . (setIDP (ID rid))
+                       . (setRequest (GetRequest rid 0 0))
                        . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
                        ) resp
-            print "second full"
-            putStr . show $ full
-            let ContextEngineID ceid = getEngineId resp
-                key = makeAuthKeyMD5 authPass ceid
-                sign = makeSign key full
-                signedPacket = signPacket sign full
-            sendAll socket $ encode signedPacket
+            -- putStr . show $ full
+            sendAll socket . encode =<< signPacket authCache authPass full
             returnResult3 socket timeout
     return $ Client 
       { get = get' 
@@ -79,12 +78,6 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
       , set = undefined
       , close = trace "close socket" $ NS.close socket
       }
-
-signPacket :: ByteString -> Packet -> Packet
-signPacket = setAuthenticationParameters
-  
-nextMsg :: ID -> ID
-nextMsg (ID x) = ID (pred x)
 
 returnResult3 :: NS.Socket -> Int -> IO Suite
 returnResult3 socket timeout = do
@@ -114,7 +107,6 @@ returnResult3 socket timeout = do
 cleanPass = B.pack $ replicate 12 0x00
 
 newtype AuthKey = AuthKey BL.ByteString deriving (Show, Eq, Ord)
-type EngineId = ByteString
 
 testPass :: Password
 testPass = "maplesyrup"
@@ -125,45 +117,62 @@ testEngineId = "\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\STX"
 testAuthKey :: AuthKey
 testAuthKey = AuthKey "Ro^\237\159\204\226o\137d\194\147\a\135\216+"
 
-makeAuthKeyMD5 :: Password -> EngineId -> AuthKey
-makeAuthKeyMD5 pass eid = 
-  let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
-      authKey = Bin.encode $ md5 buf
-  in AuthKey <$> Bin.encode $ md5 $ authKey <> BL.fromStrict eid <> authKey
-
-authenticationParameterZero :: ASN1
-authenticationParameterZero = OctetString $ B.replicate 12 0
-
 newtype ExtendAuthKey = ExtendAuthKey BL.ByteString deriving (Show, Eq, Ord)
-
-makeExtendAuthKey :: AuthKey -> ExtendAuthKey
-makeExtendAuthKey (AuthKey x) = ExtendAuthKey $ x <> BL.replicate 48 0x00
-
 newtype K1 = K1 BL.ByteString
 newtype K2 = K2 BL.ByteString
 
-ipad :: [Word8]
-ipad = replicate 64 0x36
+signPacket :: IORef (Maybe AuthKey) -> Password -> Packet -> IO Packet
+signPacket authCache authPass packet = do
+    k <- readIORef authCache
+    let key = case k of
+                 Nothing -> makeAuthKeyMD5 authPass (getEngineId packet)
+                 Just k -> k
+    when (k == Nothing) $ atomicWriteIORef authCache (Just key)
+    let sign = makeSign key packet
+    return $ setAuthenticationParameters sign packet
+    where
+        ipad :: [Word8]
+        ipad = replicate 64 0x36
+        
+        opad :: [Word8]
+        opad = replicate 64 0x5c
+        
+        step2 :: AuthKey -> (K1, K2)
+        step2 au = 
+          let ExtendAuthKey ex = makeExtendAuthKey au
+              k1 = K1 . BL.pack . map (uncurry xor) $ zip (BL.unpack ex) ipad
+              k2 = K2 . BL.pack . map (uncurry xor) $ zip (BL.unpack ex) opad
+          in (k1, k2)
+        
+        makeSign :: AuthKey -> Packet -> ByteString
+        makeSign authKey p = 
+          let (K1 k1, K2 k2) = step2 authKey
+              packetAsBin = encode p
+              f1 = Bin.encode $ md5 $ k1 <> BL.fromStrict packetAsBin
+              f2 = Bin.encode $ md5 $ k2 <> f1
+          in BL.toStrict $ BL.take 12 f2
 
-opad :: [Word8]
-opad = replicate 64 0x5c
+        makeExtendAuthKey :: AuthKey -> ExtendAuthKey
+        makeExtendAuthKey (AuthKey x) = ExtendAuthKey $ x <> BL.replicate 48 0x00
+ 
+        makeAuthKeyMD5 :: Password -> ContextEngineID -> AuthKey
+        makeAuthKeyMD5 pass (ContextEngineID eid) = 
+          let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
+              authKey = Bin.encode $ md5 buf
+          in AuthKey <$> Bin.encode $ md5 $ authKey <> BL.fromStrict eid <> authKey
+        
+        authenticationParameterZero :: ASN1
+        authenticationParameterZero = OctetString $ B.replicate 12 0
 
-step2 :: AuthKey -> (K1, K2)
-step2 au = 
-  let ExtendAuthKey ex = makeExtendAuthKey au
-      k1 = K1 . BL.pack . map (uncurry xor) $ zip (BL.unpack ex) ipad
-      k2 = K2 . BL.pack . map (uncurry xor) $ zip (BL.unpack ex) opad
-  in (k1, k2)
-
-makeSign :: AuthKey -> Packet -> ByteString
-makeSign authKey p = 
-  let (K1 k1, K2 k2) = step2 authKey
-      packetAsBin = encode p
-      f1 = Bin.encode $ md5 $ k1 <> BL.fromStrict packetAsBin
-      f2 = Bin.encode $ md5 $ k2 <> f1
-  in BL.toStrict $ BL.take 12 f2
+   
 
 
+{--
+            let key = makeAuthKeyMD5 authPass (getEngineId resp)
+                sign = makeSign key full
+                signedPacket = signPacket sign full
+
+--}
 
 {--
 
