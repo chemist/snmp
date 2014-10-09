@@ -27,9 +27,6 @@ import Data.Monoid ((<>), mempty)
 import Data.Bits (xor)
 import Data.Word (Word8)
 import Control.Exception 
-import qualified Crypto.Hash.MD5 as Md5
-import qualified Crypto.Hash.SHA1 as Sha
-import qualified Crypto.MAC.HMAC as HMAC
 import Debug.Trace
 
 import Network.Protocol.Snmp
@@ -69,7 +66,7 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
                        . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
                        ) resp
             -- putStr . show $ full
-            sendAll socket . encode =<< signPacket authType authCache authPass full
+            sendAll socket . encode =<< signPacketWithCache authType authCache authPass full
 --             sendAll socket . encode $ signPacket' authType authPass full
             print (getEngineId full)
             -- f <- signPacket authType authCache authPass full
@@ -98,38 +95,15 @@ returnResult3 socket timeout = do
 --     putStr . show $ result 
 --     return undefined 
 
-cleanPass = B.pack $ replicate 12 0x00
 
-signPacket :: AuthType -> IORef (Maybe Key) -> Password -> Packet -> IO Packet
-signPacket authType authCache authPass packet = do
+signPacketWithCache :: AuthType -> IORef (Maybe Key) -> Password -> Packet -> IO Packet
+signPacketWithCache authType authCache authPass packet = do
     k <- readIORef authCache 
     maybe (newKey authType authCache authPass packet) (reuseKey authType packet) k
     where 
     newKey at authCache authPass packet = do
         let key = passwordToKey at authPass (getEngineId packet)
         atomicWriteIORef authCache (Just key)
-        return $ signPacket' at key packet
-    reuseKey at packet key = return $ signPacket' at key packet
-  
-type Key = ByteString
-
-hash :: AuthType -> (ByteString -> ByteString)
-hash MD5 = Md5.hash
-hash SHA = Sha.hash
-
-hashlazy :: AuthType -> (BL.ByteString -> ByteString)
-hashlazy MD5 = Md5.hashlazy
-hashlazy SHA = Sha.hashlazy
-
-signPacket' :: AuthType -> Key -> Packet -> Packet 
-signPacket' at key packet = 
-    let packetAsBin = encode packet
-        sign = B.take 12 $ HMAC.hmac (hash at) 64 key packetAsBin 
-    in setAuthenticationParameters sign packet
-
-passwordToKey :: AuthType -> Password -> ContextEngineID -> Key
-passwordToKey at pass (ContextEngineID eid) = 
-  let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
-      authKey = hashlazy at buf
-  in hash at $ authKey <> eid <> authKey
-
+        return $ signPacket at key packet
+    reuseKey at packet key = return $ signPacket at key packet
+ 

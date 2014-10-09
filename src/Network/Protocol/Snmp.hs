@@ -72,6 +72,13 @@ module Network.Protocol.Snmp (
 , getAuthenticationParameters
 , setAuthenticationParameters
 , getEngineId
+-- * authentication
+, passwordToKey
+, signPacket
+, AuthType(..)
+, Password
+, Key
+, cleanPass
 -- * exceptions
 , ClientException(..) 
 -- * usage example
@@ -81,6 +88,7 @@ where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits)
 import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
@@ -88,9 +96,13 @@ import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, Par
 import Data.ASN1.BinaryEncoding (DER(..))
 import Data.ASN1.Encoding (encodeASN1', decodeASN1')
 import Control.Applicative ((<$>), (<*>), (*>), (<*))
-import Data.Monoid (Monoid)
+import Data.Monoid (Monoid, (<>))
 import Control.Exception (Exception)
 import Data.Typeable (Typeable)
+import qualified Crypto.Hash.MD5 as Md5
+import qualified Crypto.Hash.SHA1 as Sha
+import qualified Crypto.MAC.HMAC as HMAC
+import Data.IORef (newIORef, IORef, readIORef, atomicWriteIORef)
 import Debug.Trace ()
 
 -- $example
@@ -761,4 +773,34 @@ intOfBytes b
 {- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
 uintOfBytes :: ByteString -> (Int, Integer)
 uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0 b)
+
+------------------------------------------------------------------------------------------------------
+
+cleanPass = B.pack $ replicate 12 0x00
+ 
+data AuthType = MD5 | SHA deriving (Show, Eq)
+type Key = ByteString
+type Password = ByteString
+
+hash :: AuthType -> (ByteString -> ByteString)
+hash MD5 = Md5.hash
+hash SHA = Sha.hash
+
+hashlazy :: AuthType -> (BL.ByteString -> ByteString)
+hashlazy MD5 = Md5.hashlazy
+hashlazy SHA = Sha.hashlazy
+
+-- | (only V3) sign Packet 
+signPacket :: AuthType -> Key -> Packet -> Packet 
+signPacket at key packet = 
+    let packetAsBin = encode packet
+        sign = B.take 12 $ HMAC.hmac (hash at) 64 key packetAsBin 
+    in setAuthenticationParameters sign packet
+
+-- | create auth key from password and context engine id
+passwordToKey :: AuthType -> Password -> ContextEngineID -> Key
+passwordToKey at pass (ContextEngineID eid) = 
+  let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
+      authKey = hashlazy at buf
+  in hash at $ authKey <> eid <> authKey
 
