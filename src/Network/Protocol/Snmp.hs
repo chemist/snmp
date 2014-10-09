@@ -69,6 +69,7 @@ module Network.Protocol.Snmp (
 , setReportable
 , setPrivAuth
 , setUserName
+, getAuthenticationParameters
 , setAuthenticationParameters
 , getEngineId
 -- * exceptions
@@ -399,6 +400,11 @@ setAuthenticationParameters x p =
       sp = getSecurityParameter header
       newHeader = setSecurityParameter (sp { authenticationParameters = x }) header
   in setHeader newHeader p
+
+getAuthenticationParameters :: Packet -> ByteString
+getAuthenticationParameters p = 
+  let header = getHeader p :: Header V3
+  in authenticationParameters (getSecurityParameter header)
 
 
 getVersion :: Packet -> Version
