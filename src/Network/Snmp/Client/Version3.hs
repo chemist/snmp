@@ -65,10 +65,10 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
                        . (setRequest (GetRequest rid 0 0))
                        . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
                        ) resp
-            -- putStr . show $ full
+            putStr . show $ full
             sendAll socket . encode =<< signPacketWithCache authType authCache authPass full
 --             sendAll socket . encode $ signPacket' authType authPass full
-            print (getEngineId full)
+            -- print (getEngineId full)
             -- f <- signPacket authType authCache authPass full
             -- putStr . show $ f
             returnResult3 socket timeout

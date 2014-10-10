@@ -76,6 +76,7 @@ module Network.Protocol.Snmp (
 , passwordToKey
 , signPacket
 , AuthType(..)
+, PrivType(..)
 , Password
 , Key
 , cleanPass
@@ -89,8 +90,8 @@ where
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
-import Data.Word (Word8)
-import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits)
+import Data.Word (Word8, Word32)
+import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor)
 import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
 import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1(..), getNextContainer, onNextContainer, getMany)
 import Data.ASN1.BinaryEncoding (DER(..))
@@ -778,6 +779,7 @@ uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral 
 
 cleanPass = B.pack $ replicate 12 0x00
  
+data PrivType = DES | AES deriving (Show, Eq)
 data AuthType = MD5 | SHA deriving (Show, Eq)
 type Key = ByteString
 type Password = ByteString
@@ -804,3 +806,36 @@ passwordToKey at pass (ContextEngineID eid) =
       authKey = hashlazy at buf
   in hash at $ authKey <> eid <> authKey
 
+-----------------------------------------------------------------------------------------------------
+
+type PrivKey = ByteString
+type EngineBootId = Integer
+type PrivacyParameter = ByteString
+type EngineId = ByteString
+
+pk :: ByteString
+pk = "helloallhelloall"
+eb :: Integer
+eb = 40
+
+--  initDes :: AuthType -> PrivType -> PrivacyParameter -> EngineId -> EngineBootId -> Priv
+
+makePrivKey :: AuthType -> PrivacyParameter -> EngineId -> PrivKey
+makePrivKey au pass eid = passwordToKey au pass (ContextEngineID eid)
+
+getEncryptionKey :: PrivKey -> EngineBootId -> ([Word8], [Word8], [Word8])
+getEncryptionKey privKey engineBoot = 
+  let desKey = take 8 $ B.unpack privKey
+      preIV = drop 8 $ take 16 $ B.unpack privKey
+      localInt = 100
+      eB = fromIntegral engineBoot
+      salt = [ (shiftR eB 24 .&. 0xff) :: Word8
+             , shiftR eB 16 .&. 0xff
+             , shiftR eB 8  .&. 0xff
+             , shiftR eB 0  .&. 0xff
+             , (shiftR localInt 24   .&. 0xff) :: Word8
+             , shiftR localInt 16   .&. 0xff
+             , shiftR localInt  8   .&. 0xff
+             , shiftR localInt  0   .&. 0xff
+             ] 
+  in (desKey, salt, map (uncurry xor) $ zip salt preIV)

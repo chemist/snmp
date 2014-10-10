@@ -9,7 +9,6 @@ type Hostname = String
 type Port = String
 type Login = ByteString
 
-data PrivType = DES | AES deriving (Show, Eq)
 
 data Config = ConfigV2
   { hostname :: Hostname
