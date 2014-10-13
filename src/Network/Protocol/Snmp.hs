@@ -85,6 +85,7 @@ module Network.Protocol.Snmp (
 , testPriv
 , testSalt
 , testBody
+, testEID1
 , testSalt1
 , testBody1
 , desEncrypt
@@ -398,7 +399,11 @@ setCommunityP x p =
   in setHeader newHeader p
 
 getEngineId :: Packet -> EngineId
-getEngineId = getAuthenticationParameters 
+getEngineId p = 
+  let header = getHeader p :: Header V3
+      sp = getSecurityParameter header
+  in authoritiveEngineId sp
+
 
 setReportable :: Reportable -> Packet -> Packet
 setReportable r p = 
@@ -843,6 +848,9 @@ eb = 40
 testEID :: ByteString
 testEID = "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
 
+testEID1 :: ByteString
+testEID1 = "\128\NUL\US\136\128P\247.l\SO\203\GST\NUL\NUL\NUL\NUL"
+
 testPriv :: ByteString
 testPriv = "helloall"
 
@@ -852,11 +860,11 @@ testSalt = "\NUL\NUL\NUL\SOH<\175\244\201"
 testBody :: ByteString
 testBody = "w\175\166{\142,\144s\248\b\252t\FS\229I\152\EM\f\193F0\ETX\207\SYN\193\155i\177\190\213J\239\128\154<\128{\a\194\255Y8\155+\194\161\ESCM\191\184\161%v\184\220\145"
 
-testBody1 :: ByteString
-testBody1 = "j\RS\131{\141K\173\ENQ\169NO\217\163\165|\165@\185\129f\183,\NAK\244\SOH\183\174J)\234\186\202\188W\141\244\ACK\230\149\202\167g\154\212I'\162\253\185\192T\ACK}.#\192"
-
 testSalt1 :: ByteString
-testSalt1 = "_Y\\\228\168\211\129\133"
+testSalt1 = "\NUL\NUL\NUL\ETB\243\137\129\156"
+
+testBody1 :: ByteString
+testBody1 = "\237;x;wT\208\230\199\178\STX\DLE\ENQ\166\150\193\240\184\151\EOT\NAKj\215E\195\229\219\n\192\166\153\184\215\209\205k\163Y0\170\146C\206\206\EOT\236\SI\193\184X.\234\131\133\241\DLE*\129\204\179.\188\141\197"
 
 encryptPacket :: PrivType -> Key -> Packet -> Packet
 encryptPacket DES key packet = 
@@ -908,8 +916,8 @@ stripBS bs =
                   0   -> undefined
                   len -> 
                     let size = uintbs (B.take len (B.drop 1 bs'))
-                    in B.take (size + len) (B.drop 1 bs')
-        else B.take l1 (B.drop 1 bs')
+                    in B.take (size + len + 2) bs
+        else B.take (l1 + 2) bs
     where
       {- uintbs return the unsigned int represented by the bytes -}
       uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0

@@ -33,14 +33,14 @@ oi :: ByteString
 oi = ".1.3.6.1.2.1.1.9.1.2.1"
 
 showExample = do
-    firstRequest <- decode <$> BS.readFile "firstRequest" :: IO Packet
-    firstResponse <- decode <$> BS.readFile "firstResponse" :: IO Packet
+    --firstRequest <- decode <$> BS.readFile "firstRequest" :: IO Packet
+    --firstResponse <- decode <$> BS.readFile "firstResponse" :: IO Packet
     secondRequest <- decode <$> BS.readFile "secondRequest" :: IO Packet
     secondResponse <- decode <$> BS.readFile "secondResponse" :: IO Packet
-    print "first request"
-    putStr . show $ firstRequest
-    print "first response"
-    putStr . show $ firstResponse
+    --print "first request"
+    --putStr . show $ firstRequest
+    --print "first response"
+    --putStr . show $ firstResponse
     print "second request"
     putStr . show $ secondRequest
     print "second response"
@@ -58,7 +58,8 @@ conf3 = (defConfig Version3) { hostname = "salt"
                              , authPass = "helloall"
                              , privPass = "helloall"
                              , authType = SHA
-                             , sequrityLevel = AuthPriv
+        --                     , privType = DES
+                             , sequrityLevel = AuthNoPriv
                              } 
 
 -- clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
@@ -78,9 +79,9 @@ requests :: Client -> IO ()
 requests snmp = do
     print "get request"
     putStr . show =<< get snmp [oidFromBS testOid]
---    putStr . show =<< get snmp [oidFromBS testOid]
---    putStr . show =<< get snmp [oidFromBS sysUptime, oidFromBS oi, zeroDotZero]
-{--
+    {--
+    putStr . show =<< get snmp [oidFromBS testOid]
+    putStr . show =<< get snmp [oidFromBS sysUptime, oidFromBS oi, zeroDotZero]
     print "bulkget request"
     putStr . show =<< bulkget snmp [oidFromBS sysUptime]
     print "getnext request"
@@ -97,4 +98,3 @@ requests snmp = do
     putStr . show =<< get snmp [oidFromBS sysContact]
 
 --}
-

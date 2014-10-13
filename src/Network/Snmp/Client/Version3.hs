@@ -66,9 +66,10 @@ clientV3 hostname port timeout sequrityName authPass privPass securityLevel cont
                        . (setRequest (GetRequest rid 0 0))
                        . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
                        ) resp
-            -- putStr . show $ full
+            putStr . show $ full
             r <- signPacketWithCache authType authCache authPass =<< encryptPacketWithCache securityLevel authType privType privCache privPass full
             putStr . show $ r
+            -- B.writeFile "packet" (encode r)
             sendAll socket . encode $ r
 --             sendAll socket . encode $ signPacket' authType authPass full
             -- print (getEngineId full)
