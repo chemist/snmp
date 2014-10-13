@@ -37,11 +37,12 @@ v3 :: Packet
 v3 = initial Version3 
 
 clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> ByteString -> AuthType -> PrivType -> IO Client
-clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
+clientV3 hostname port timeout sequrityName authPass privPass securityLevel context authType privType = do
     socket <- trace "open socket" $ makeSocket hostname port 
     uniqInteger <- uniqID
     ref <- trace "init rid" $ newIORef uniqInteger
     authCache <- newIORef Nothing
+    privCache <- newIORef Nothing
     let 
         packet x = ( setIDP (ID x) 
                    . setMaxSizeP (MaxSize 65007) 
@@ -58,15 +59,17 @@ clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel cont
             rid <- predCounter ref
             let  
                 full = ( (setReportable True) 
-                       . (setPrivAuth sequrityLevel) 
+                       . (setPrivAuth securityLevel) 
                        . (setUserName sequrityName)  
                        . (setAuthenticationParameters cleanPass)  
                        . (setIDP (ID rid))
                        . (setRequest (GetRequest rid 0 0))
                        . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
                        ) resp
-            putStr . show $ full
-            sendAll socket . encode =<< signPacketWithCache authType authCache authPass full
+            -- putStr . show $ full
+            r <- signPacketWithCache authType authCache authPass =<< encryptPacketWithCache securityLevel authType privType privCache privPass full
+            putStr . show $ r
+            sendAll socket . encode $ r
 --             sendAll socket . encode $ signPacket' authType authPass full
             -- print (getEngineId full)
             -- f <- signPacket authType authCache authPass full
@@ -107,3 +110,15 @@ signPacketWithCache authType authCache authPass packet = do
         return $ signPacket at key packet
     reuseKey at packet key = return $ signPacket at key packet
  
+encryptPacketWithCache :: PrivAuth -> AuthType -> PrivType -> IORef (Maybe Key) -> Password -> Packet -> IO Packet
+encryptPacketWithCache AuthPriv authType privType privCache privPass packet = do
+    k <- readIORef privCache
+    maybe (newKey authType privType privCache privPass packet) (reuseKey authType privType packet) k
+    where
+    newKey at privType privCache privPass packet = do
+        let key = passwordToKey at privPass (getEngineId packet)
+        atomicWriteIORef privCache (Just key)
+        return $ encryptPacket privType key packet  
+    reuseKey _ privType packet key = return $ encryptPacket privType key packet
+encryptPacketWithCache _ _ _ _ _ p = return p
+

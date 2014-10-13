@@ -37,11 +37,13 @@ showExample = do
     firstResponse <- decode <$> BS.readFile "firstResponse" :: IO Packet
     secondRequest <- decode <$> BS.readFile "secondRequest" :: IO Packet
     secondResponse <- decode <$> BS.readFile "secondResponse" :: IO Packet
-    print "first"
+    print "first request"
     putStr . show $ firstRequest
+    print "first response"
     putStr . show $ firstResponse
-    print "second"
+    print "second request"
     putStr . show $ secondRequest
+    print "second response"
     putStr . show $ secondResponse
 
 main = client3
@@ -54,9 +56,9 @@ conf3 :: Config
 conf3 = (defConfig Version3) { hostname = "salt" 
                              , sequrityName = "sha"
                              , authPass = "helloall"
-                             , privPass = ""
+                             , privPass = "helloall"
                              , authType = SHA
-                             , sequrityLevel = AuthNoPriv
+                             , sequrityLevel = AuthPriv
                              } 
 
 -- clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do
@@ -76,8 +78,9 @@ requests :: Client -> IO ()
 requests snmp = do
     print "get request"
     putStr . show =<< get snmp [oidFromBS testOid]
-    putStr . show =<< get snmp [oidFromBS testOid]
+--    putStr . show =<< get snmp [oidFromBS testOid]
 --    putStr . show =<< get snmp [oidFromBS sysUptime, oidFromBS oi, zeroDotZero]
+{--
     print "bulkget request"
     putStr . show =<< bulkget snmp [oidFromBS sysUptime]
     print "getnext request"
@@ -92,4 +95,6 @@ requests snmp = do
     putStr . show =<< set snmp (Suite [Coupla (oidFromBS sysContact) (String "hello all")])
     print "get sysContact"
     putStr . show =<< get snmp [oidFromBS sysContact]
+
+--}
 

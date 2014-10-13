@@ -80,6 +80,17 @@ module Network.Protocol.Snmp (
 , Password
 , Key
 , cleanPass
+-- * priv
+, testEID
+, testPriv
+, testSalt
+, testBody
+, testSalt1
+, testBody1
+, desEncrypt
+, desDecrypt
+, encryptPacket
+-- , stripBS
 -- * exceptions
 , ClientException(..) 
 -- * usage example
@@ -91,7 +102,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8, Word32)
-import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor)
+import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
 import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
 import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1(..), getNextContainer, onNextContainer, getMany)
 import Data.ASN1.BinaryEncoding (DER(..))
@@ -103,8 +114,10 @@ import Data.Typeable (Typeable)
 import qualified Crypto.Hash.MD5 as Md5
 import qualified Crypto.Hash.SHA1 as Sha
 import qualified Crypto.MAC.HMAC as HMAC
+import qualified Crypto.Cipher.Types as Priv
+import qualified Crypto.Cipher.DES as Priv
 import Data.IORef (newIORef, IORef, readIORef, atomicWriteIORef)
-import Debug.Trace ()
+import Debug.Trace (trace)
 
 -- $example
 --
@@ -178,6 +191,7 @@ deriving instance Eq (Header a)
 data PDU a where
   PDU :: Request -> Suite -> PDU V2
   ScopedPDU :: ContextEngineID -> ContextName -> PDU V2 -> PDU V3
+  CryptedPDU :: ByteString -> PDU V3
 
 deriving instance Show (PDU a)
 deriving instance Eq (PDU a)
@@ -383,8 +397,8 @@ setCommunityP x p =
       newHeader = setCommunity x header
   in setHeader newHeader p
 
-getEngineId :: Packet -> ContextEngineID
-getEngineId p = getContextEngineID $ (getPDU p :: PDU V3)
+getEngineId :: Packet -> EngineId
+getEngineId = getAuthenticationParameters 
 
 setReportable :: Reportable -> Packet -> Packet
 setReportable r p = 
@@ -413,11 +427,18 @@ setAuthenticationParameters x p =
       sp = getSecurityParameter header
       newHeader = setSecurityParameter (sp { authenticationParameters = x }) header
   in setHeader newHeader p
-
+  
 getAuthenticationParameters :: Packet -> ByteString
 getAuthenticationParameters p = 
   let header = getHeader p :: Header V3
   in authenticationParameters (getSecurityParameter header)
+
+setPrivParameters :: ByteString -> Packet -> Packet 
+setPrivParameters x p = 
+  let header = getHeader p :: Header V3
+      sp = getSecurityParameter header
+      newHeader = setSecurityParameter (sp { privacyParameters = x }) header
+  in setHeader newHeader p
 
 
 getVersion :: Packet -> Version
@@ -505,15 +526,17 @@ pduParser = do
 instance ASN1Object (PDU V3) where
     toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs = 
       [Start Sequence, OctetString x, OctetString y] ++ (toASN1 pdu (End Sequence :xs))
+    toASN1 (CryptedPDU cryptedBody) xs = OctetString cryptedBody : xs
     fromASN1 asn = flip runParseASN1State asn $ do
-        Start whatIs <- getNext
+        whatIs <- getNext
         case whatIs of
-             Sequence -> do
+             Start Sequence -> do
                  OctetString x <- getNext
                  OctetString y <- getNext
                  p <- pduParser 
                  End Sequence <- getNext
                  return $ ScopedPDU (ContextEngineID x) (ContextName y) p
+             OctetString x -> return $ CryptedPDU x
 
 instance ASN1Object Version where
     toASN1 Version1 xs = IntVal 0 : xs
@@ -615,10 +638,10 @@ instance ASN1Object Flag where
     fromASN1 asn = flip runParseASN1State asn $ do
         OctetString x <- getNext
         let [w] = B.unpack x
-        return $ case (testBit w 1, testBit w 2) of
-                      (True, True) -> Flag (testBit w 0) AuthPriv
-                      (False, False) -> Flag (testBit w 0) NoAuthNoPriv
-                      (False, True) -> Flag (testBit w 0) AuthNoPriv
+        trace (show w) return $ case (testBit w 0, testBit w 1) of
+                      (True, True) -> Flag (testBit w 2) AuthPriv
+                      (False, False) -> Flag (testBit w 2) NoAuthNoPriv
+                      (True, False) -> Flag (testBit w 2) AuthNoPriv
                       _ -> error "bad flag"
 
 
@@ -800,15 +823,14 @@ signPacket at key packet =
     in setAuthenticationParameters sign packet
 
 -- | create auth key from password and context engine id
-passwordToKey :: AuthType -> Password -> ContextEngineID -> Key
-passwordToKey at pass (ContextEngineID eid) = 
+passwordToKey :: AuthType -> Password -> EngineId -> Key
+passwordToKey at pass eid = 
   let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
       authKey = hashlazy at buf
   in hash at $ authKey <> eid <> authKey
 
 -----------------------------------------------------------------------------------------------------
 
-type PrivKey = ByteString
 type EngineBootId = Integer
 type PrivacyParameter = ByteString
 type EngineId = ByteString
@@ -818,24 +840,76 @@ pk = "helloallhelloall"
 eb :: Integer
 eb = 40
 
---  initDes :: AuthType -> PrivType -> PrivacyParameter -> EngineId -> EngineBootId -> Priv
+testEID :: ByteString
+testEID = "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
 
-makePrivKey :: AuthType -> PrivacyParameter -> EngineId -> PrivKey
-makePrivKey au pass eid = passwordToKey au pass (ContextEngineID eid)
+testPriv :: ByteString
+testPriv = "helloall"
 
-getEncryptionKey :: PrivKey -> EngineBootId -> ([Word8], [Word8], [Word8])
-getEncryptionKey privKey engineBoot = 
-  let desKey = take 8 $ B.unpack privKey
-      preIV = drop 8 $ take 16 $ B.unpack privKey
-      localInt = 100
-      eB = fromIntegral engineBoot
-      salt = [ (shiftR eB 24 .&. 0xff) :: Word8
-             , shiftR eB 16 .&. 0xff
-             , shiftR eB 8  .&. 0xff
-             , shiftR eB 0  .&. 0xff
-             , (shiftR localInt 24   .&. 0xff) :: Word8
-             , shiftR localInt 16   .&. 0xff
-             , shiftR localInt  8   .&. 0xff
-             , shiftR localInt  0   .&. 0xff
-             ] 
-  in (desKey, salt, map (uncurry xor) $ zip salt preIV)
+testSalt :: ByteString
+testSalt = "\NUL\NUL\NUL\SOH<\175\244\201"
+
+testBody :: ByteString
+testBody = "w\175\166{\142,\144s\248\b\252t\FS\229I\152\EM\f\193F0\ETX\207\SYN\193\155i\177\190\213J\239\128\154<\128{\a\194\255Y8\155+\194\161\ESCM\191\184\161%v\184\220\145"
+
+testBody1 :: ByteString
+testBody1 = "j\RS\131{\141K\173\ENQ\169NO\217\163\165|\165@\185\129f\183,\NAK\244\SOH\183\174J)\234\186\202\188W\141\244\ACK\230\149\202\167g\154\212I'\162\253\185\192T\ACK}.#\192"
+
+testSalt1 :: ByteString
+testSalt1 = "_Y\\\228\168\211\129\133"
+
+encryptPacket :: PrivType -> Key -> Packet -> Packet
+encryptPacket DES key packet = 
+    let eib = authoritiveEngineBoots $ getSecurityParameter $ (getHeader packet :: Header V3)
+        body = encodeASN1' DER $ toASN1 (getPDU packet :: PDU V3) []
+        encrypted = desEncrypt key eib body 
+    in setPrivParameters (B.take 8 key) . setPDU (CryptedPDU encrypted) $ packet
+encryptPacket _ _ _ = error "not implement"
+
+desEncrypt :: Key -> EngineBootId -> ByteString -> ByteString
+desEncrypt privKey engineBoot dataToEncrypt = 
+    let desKey = B.take 8 privKey
+        preIV = B.drop 8 $ B.take 16 privKey
+        localInt = 100
+        eB = fromIntegral engineBoot
+        salt  = [ (shiftR eB 24 .&. 0xff) :: Word8
+                , shiftR eB 16 .&. 0xff
+                , shiftR eB 8  .&. 0xff
+                , shiftR eB 0  .&. 0xff
+                , (shiftR localInt 24   .&. 0xff) :: Word8
+                , shiftR localInt 16   .&. 0xff
+                , shiftR localInt  8   .&. 0xff
+                , shiftR localInt  0   .&. 0xff
+                ] 
+        ivR = map (uncurry xor) $ zip (B.unpack preIV) salt
+        Just iv = Priv.makeIV (B.pack ivR)
+        Right key = Priv.makeKey desKey 
+        des = Priv.cipherInit key :: Priv.DES
+    in Priv.cbcEncrypt des iv dataToEncrypt
+        
+desDecrypt :: Key -> PrivacyParameter -> ByteString -> ByteString
+desDecrypt privKey privParameters dataToDecrypt =
+    let desKey = B.take 8 privKey
+        preIV = B.drop 8 $ B.take 16 privKey
+        salt = privParameters
+        ivR = map (uncurry xor) $ zip (B.unpack preIV) (B.unpack salt)
+        Just iv = Priv.makeIV (B.pack ivR)
+        Right key = Priv.makeKey desKey
+        des = Priv.cipherInit key :: Priv.DES
+    in stripBS $ Priv.cbcDecrypt des iv dataToDecrypt
+
+
+stripBS :: ByteString -> ByteString
+stripBS bs = 
+    let bs' = B.drop 1 bs
+        l1 = fromIntegral $ B.head bs'
+    in if testBit l1 7
+        then case clearBit l1 7 of
+                  0   -> undefined
+                  len -> 
+                    let size = uintbs (B.take len (B.drop 1 bs'))
+                    in B.take (size + len) (B.drop 1 bs')
+        else B.take l1 (B.drop 1 bs')
+    where
+      {- uintbs return the unsigned int represented by the bytes -}
+      uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
