@@ -8,10 +8,7 @@ import Data.ByteString (ByteString)
 type Hostname = String
 type Port = String
 type Login = ByteString
-type Password = ByteString
 
-data AuthType = MD5 | SHA deriving (Show, Eq)
-data PrivType = DES | AES deriving (Show, Eq)
 
 data Config = ConfigV2
   { hostname :: Hostname

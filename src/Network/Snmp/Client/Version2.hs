@@ -32,7 +32,7 @@ returnResult2 socket timeout = do
          Left _ -> throwIO TimeoutException            
 
 setRCS :: Community -> OIDS -> Packet -> Packet
-setRCS c o = setCommunity c . setSuite (Suite $ map (\x -> Coupla x Zero) o)
+setRCS c o = setCommunityP c . setSuite (Suite $ map (\x -> Coupla x Zero) o)
 
 clientV2 :: Hostname -> Port -> Int -> Community -> IO Client
 clientV2 hostname port timeout community = do
@@ -41,17 +41,17 @@ clientV2 hostname port timeout community = do
     let 
         req oids = setRCS community oids v2
         get' oids = withSocketsDo $ do
-            rid <- succRequestId ref
+            rid <- succCounter ref
             sendAll socket $ encode $ setRequest (GetRequest rid 0 0) (req oids) 
             returnResult2 socket timeout
 
         bulkget' oids = withSocketsDo $ do
-            rid <- succRequestId ref
+            rid <- succCounter ref
             sendAll socket $ encode $ setRequest (GetBulk rid 0 10) (req oids)
             returnResult2 socket timeout
 
         getnext' oids = withSocketsDo $ do
-            rid <- succRequestId ref
+            rid <- succCounter ref
             sendAll socket $ encode $ setRequest (GetNextRequest rid 0 0) (req oids)
             returnResult2 socket timeout
 
@@ -83,16 +83,16 @@ clientV2 hostname port timeout community = do
                     (False, _) -> bulkwalk' next base (accumulator <> first)
                     (True, _) -> return $ accumulator <> filtered first
         set' oids = withSocketsDo $ do
-            rid <- succRequestId ref
-            sendAll socket $ encode $ setRequest (SetRequest rid 0 0) . setCommunity community . setSuite oids $ v2
+            rid <- succCounter ref
+            sendAll socket $ encode $ setRequest (SetRequest rid 0 0) . setCommunityP community . setSuite oids $ v2
             returnResult2 socket timeout
 
     return $ Client 
         { get = get'
         , bulkget = bulkget'
         , getnext = getnext'
-        , walk = \oids -> mconcat <$> mapM (\oi -> withSocketsDo $ walk' oi oi mempty) oids
-        , bulkwalk = \oids -> mconcat <$> mapM (\oi -> withSocketsDo $ bulkwalk' oi oi mempty) oids
+        , walk = \oids -> mconcat <$> mapM (\oi -> walk' oi oi mempty) oids
+        , bulkwalk = \oids -> mconcat <$> mapM (\oi -> bulkwalk' oi oi mempty) oids
         , set = set' 
         , close = trace "close socket" $ NS.close socket
         } 
