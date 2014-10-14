@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Network.Snmp.Client.Version3 
 -- ( clientV3
 -- , msg
@@ -36,42 +37,35 @@ import Network.Snmp.Client.Internal
 v3 :: Packet 
 v3 = initial Version3 
 
-clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> ByteString -> AuthType -> PrivType -> IO Client
-clientV3 hostname port timeout sequrityName authPass privPass securityLevel context authType privType = do
+data ST = ST
+  { authCache' :: IORef (Maybe ByteString)
+  , privCache' :: IORef (Maybe ByteString)
+  , engine' :: IORef (Maybe (ByteString, Integer, Integer))
+  , ref' :: IORef Integer
+  , saltInt' :: IORef Integer
+  , securityLevel' :: PrivAuth
+  , authType' :: AuthType
+  , privType' :: PrivType
+  , timeout' :: Int
+  , socket' :: Socket
+  , login' :: Login
+  , authPass' :: Password
+  , privPass' :: Password
+  } 
+
+clientV3 :: Hostname -> Port -> Int -> Login -> Password -> Password -> PrivAuth -> AuthType -> PrivType -> IO Client
+clientV3 hostname port timeout sequrityName authPass privPass securityLevel authType privType = do
     socket <- makeSocket hostname port 
     uniqInteger <- uniqID
     ref <- newIORef uniqInteger
+    saltInt <- newIORef 1
     authCache <- newIORef Nothing
     privCache <- newIORef Nothing
-    let 
-        packet x = ( setIDP (ID x) 
-                   . setMaxSizeP (MaxSize 65007) 
-                   . setReportable False  
-                   . setPrivAuth AuthNoPriv  
-                   . setRid x 
-                   ) v3
-        get' oids = withSocketsDo $ do
-            rid <- predCounter ref
-            sendAll socket $ encode $ packet rid
-            resp <- decode <$> recv socket 1500 :: IO Packet
-            rid <- predCounter ref
-            let  
-                full = ( (setReportable True) 
-                       . (setPrivAuth securityLevel) 
-                       . (setUserName sequrityName)  
-                       . (setAuthenticationParameters cleanPass)  
-                       . (setIDP (ID rid))
-                       . (setRequest (GetRequest rid 0 0))
-                       . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
-                       ) resp
-            sendAll socket . encode 
-              =<< signPacketWithCache authType authCache authPass 
-              =<< encryptPacketWithCache securityLevel authType privType privCache privPass full
-            packet <-  decryptPacketWithCache authType privType privCache privPass =<< returnResult socket (sec 5)
-            return $ getSuite packet
+    engine <- newIORef Nothing
+    let st = ST authCache privCache engine ref saltInt securityLevel authType privType timeout socket sequrityName authPass privPass
     return $ Client 
-      { get = get' 
-      , bulkget = undefined
+      { get = get' st
+      , bulkget = bulkget' st
       , getnext = undefined
       , walk = undefined
       , bulkwalk = undefined
@@ -79,46 +73,109 @@ clientV3 hostname port timeout sequrityName authPass privPass securityLevel cont
       , close = NS.close socket
       }
 
-returnResult :: NS.Socket -> Int -> IO Packet
-returnResult socket timeout = do
-    result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO Packet)
+packet :: Integer -> Packet
+packet x = ( setIDP (ID x)
+           . setMaxSizeP (MaxSize 65007)
+           . setReportableP False
+           . setPrivAuthP NoAuthNoPriv
+           . setRid x
+           ) v3
+
+init' :: ST -> IO (ByteString, Integer, Integer)
+init' st = withSocketsDo $ do
+    rid <- predCounter (ref' st)
+    sendAll (socket' st) $ encode $ packet rid
+    resp <- decode <$> recv (socket' st) 1500 :: IO Packet
+    atomicWriteIORef (engine' st) $ Just (getEngineIdP resp, getEngineBootsP resp, getEngineTimeP resp) 
+    return (getEngineIdP resp, getEngineBootsP resp, getEngineTimeP resp)
+
+get' :: ST -> OIDS -> IO Suite
+get' st oids = withSocketsDo $ do
+    rid <- predCounter (ref' st)
+    eid' <- readIORef (engine' st)
+    (eid, boots, time) <- case eid' of
+                 Just x -> return x
+                 Nothing -> init' st
+    let full = ( (setReportableP True) 
+               . (setPrivAuthP (securityLevel' st)) 
+               . (setUserNameP (login' st))  
+               . (setEngineIdP eid)
+               . (setEngineBootsP boots)
+               . (setEngineTimeP time)
+               . (setAuthenticationParametersP cleanPass)  
+               . (setIDP (ID rid))
+               . (setRequest (GetRequest rid 0 0))
+               . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
+               ) v3
+    sendAll (socket' st) . encode 
+      =<< signPacketWithCache st
+      =<< encryptPacketWithCache st full
+    packet <-  decryptPacketWithCache st =<< returnResult st
+    return $ getSuite packet
+
+bulkget' :: ST -> OIDS -> IO Suite
+bulkget' st oids = withSocketsDo $ do
+    rid <- predCounter (ref' st)
+    eid' <- readIORef (engine' st)
+    (eid, boots, time) <- case eid' of
+                 Just x -> return x
+                 Nothing -> init' st
+    let full = ( (setReportableP True) 
+               . (setPrivAuthP (securityLevel' st)) 
+               . (setUserNameP (login' st))  
+               . (setEngineIdP eid)
+               . (setEngineBootsP boots)
+               . (setEngineTimeP time)
+               . (setAuthenticationParametersP cleanPass)  
+               . (setIDP (ID rid))
+               . (setRequest (GetBulk rid 0 10))
+               . (setSuite  (Suite $ map (\x -> Coupla x Zero) oids))
+               ) v3
+    sendAll (socket' st) . encode 
+      =<< signPacketWithCache st 
+      =<< encryptPacketWithCache st full
+    packet <-  decryptPacketWithCache st =<< returnResult st
+    return $ getSuite packet
+
+returnResult :: ST -> IO Packet
+returnResult st = do
+    result <- race (threadDelay (timeout' st)) (decode <$> recv (socket' st) 1500 :: IO Packet)
     case result of
          Right resp -> return resp
          Left _ -> throwIO TimeoutException
 
-
-signPacketWithCache :: AuthType -> IORef (Maybe Key) -> Password -> Packet -> IO Packet
-signPacketWithCache authType authCache authPass packet = do
-    k <- readIORef authCache 
-    maybe (newKey authType authCache authPass packet) (reuseKey authType packet) k
-    where 
-    newKey at authCache authPass packet = do
-        let key = passwordToKey at authPass (getEngineId packet)
-        atomicWriteIORef authCache (Just key)
-        return $ signPacket at key packet
-    reuseKey at packet key = return $ signPacket at key packet
- 
-encryptPacketWithCache :: PrivAuth -> AuthType -> PrivType -> IORef (Maybe Key) -> Password -> Packet -> IO Packet
-encryptPacketWithCache AuthPriv authType privType privCache privPass packet = do
-    k <- readIORef privCache
-    maybe (newKey authType privType privCache privPass packet) (reuseKey privType packet) k
+signPacketWithCache :: ST -> Packet -> IO Packet
+signPacketWithCache st packet = do
+    k <- readIORef (authCache' st)
+    maybe (newKey packet) (reuseKey packet) k
     where
-    newKey at privType privCache privPass packet = do
-        let key = passwordToKey at privPass (getEngineId packet)
-        atomicWriteIORef privCache (Just key)
-        return $ encryptPacket privType key packet  
-    reuseKey privType packet key = return $ encryptPacket privType key packet
-encryptPacketWithCache _ _ _ _ _ p = return p
+    newKey packet = do
+        let key = passwordToKey (authType' st) (authPass' st) (getEngineIdP packet)
+        atomicWriteIORef (authCache' st) (Just key)
+        return $ signPacket (authType' st) key packet
+    reuseKey packet key = return $ signPacket (authType' st) key packet
 
-decryptPacketWithCache :: AuthType -> PrivType -> IORef (Maybe Key) -> Password -> Packet -> IO Packet
-decryptPacketWithCache authType privType privCache privPass packet = do
-    k <- readIORef privCache
-    maybe (newKey authType privType privCache privPass packet) (reuseKey privType packet) k
+encryptPacketWithCache :: ST -> Packet -> IO Packet
+encryptPacketWithCache st packet 
+    | (securityLevel' st) == AuthPriv = do
+        k <- readIORef (privCache' st)
+        maybe (newKey packet) (reuseKey packet) k
+    | otherwise = return packet
+        where
+          newKey packet = do
+              let key = passwordToKey (authType' st) (privPass' st) (getEngineIdP packet)
+              atomicWriteIORef (privCache' st) (Just key)
+              return $ encryptPacket (privType' st) key packet  
+          reuseKey packet key = return $ encryptPacket (privType' st) key packet
+
+decryptPacketWithCache :: ST -> Packet -> IO Packet
+decryptPacketWithCache st packet = do
+    k <- readIORef (privCache' st)
+    maybe (newKey packet) (reuseKey packet) k
     where
-    newKey at privType privCache privPass packet = do
-        let key = passwordToKey at privPass (getEngineId packet)
-        atomicWriteIORef privCache (Just key)
-        return $ decryptPacket privType key packet
-    reuseKey privType packet key = return $ decryptPacket privType key packet
-
+    newKey packet = do
+        let key = passwordToKey (authType' st) (privPass' st) (getEngineIdP packet)
+        atomicWriteIORef (privCache' st) (Just key)
+        return $ decryptPacket (privType' st) key packet
+    reuseKey packet key = return $ decryptPacket (privType' st) key packet
 

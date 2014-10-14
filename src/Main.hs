@@ -79,11 +79,11 @@ requests :: Client -> IO ()
 requests snmp = do
     print "get request"
     putStr . show =<< get snmp [oidFromBS testOid]
-    {--
     putStr . show =<< get snmp [oidFromBS testOid]
     putStr . show =<< get snmp [oidFromBS sysUptime, oidFromBS oi, zeroDotZero]
     print "bulkget request"
     putStr . show =<< bulkget snmp [oidFromBS sysUptime]
+    {--
     print "getnext request"
     putStr . show =<< getnext snmp [oidFromBS sysUptime]
     print "walk memory"

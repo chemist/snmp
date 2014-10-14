@@ -66,12 +66,17 @@ module Network.Protocol.Snmp (
 -- *** v3 only
 , setIDP
 , setMaxSizeP
-, setReportable
-, setPrivAuth
-, setUserName
-, getAuthenticationParameters
-, setAuthenticationParameters
-, getEngineId
+, setUserNameP
+, getAuthenticationParametersP
+, setAuthenticationParametersP
+, setReportableP
+, setPrivAuthP
+, getEngineIdP
+, setEngineIdP
+, getEngineBootsP
+, setEngineBootsP
+, getEngineTimeP
+, setEngineTimeP
 -- * authentication
 , passwordToKey
 , signPacket
@@ -81,13 +86,6 @@ module Network.Protocol.Snmp (
 , Key
 , cleanPass
 -- * priv
-, testEID
-, testPriv
-, testSalt
-, testBody
-, testEID1
-, testSalt1
-, testBody1
 , desEncrypt
 , desDecrypt
 , encryptPacket
@@ -311,6 +309,12 @@ class HasV3 a where
     getFlag :: Header a -> Flag
     getSecurityModel :: Header a -> SecurityModel
     getSecurityParameter :: Header a -> SecurityParameter
+    getAuthoritiveEngineId :: Header a -> ByteString
+    getAuthoritiveEngineBoots :: Header a -> Integer
+    getAuthoritiveEngineTime :: Header a -> Integer
+    getUserName :: Header a -> ByteString
+    getAuthenticationParameters :: Header a -> ByteString
+    getPrivacyParameters :: Header a -> ByteString
     getContextEngineID :: PDU a -> ContextEngineID
     getContextName :: PDU a -> ContextName
     setID :: ID -> Header a -> Header a
@@ -318,6 +322,12 @@ class HasV3 a where
     setFlag :: Flag -> Header a -> Header a
     setSecurityModel :: SecurityModel -> Header a -> Header a
     setSecurityParameter :: SecurityParameter -> Header a -> Header a
+    setAuthoritiveEngineId :: ByteString -> Header a -> Header a
+    setAuthoritiveEngineBoots :: Integer -> Header a -> Header a
+    setAuthoritiveEngineTime :: Integer -> Header a -> Header a
+    setUserName :: ByteString -> Header a -> Header a
+    setAuthenticationParameters :: ByteString -> Header a -> Header a
+    setPrivacyParameters :: ByteString -> Header a -> Header a
     setContextEngineID :: ContextEngineID -> PDU a -> PDU a
     setContextName :: ContextName -> PDU a -> PDU a
 
@@ -373,6 +383,12 @@ instance HasV3 V3 where
     getFlag (V3Header _ _ i _ _) = i
     getSecurityModel (V3Header _ _ _ i _) = i
     getSecurityParameter (V3Header _ _ _ _ i) = i
+    getAuthoritiveEngineId = authoritiveEngineId . getSecurityParameter
+    getAuthoritiveEngineBoots = authoritiveEngineBoots . getSecurityParameter
+    getAuthoritiveEngineTime = authoritiveEngineTime . getSecurityParameter
+    getUserName = userName . getSecurityParameter
+    getAuthenticationParameters = authenticationParameters . getSecurityParameter
+    getPrivacyParameters = privacyParameters . getSecurityParameter
     getContextEngineID (ScopedPDU i _ _) = i
     getContextName (ScopedPDU _ i _) = i
     setID i (V3Header _ a b c d) = V3Header i a b c d
@@ -380,6 +396,12 @@ instance HasV3 V3 where
     setFlag i (V3Header a b _ c d) = V3Header a b i c d
     setSecurityModel i (V3Header a b c _ d) = V3Header a b c i d
     setSecurityParameter i (V3Header a b c d _) = V3Header a b c d i
+    setAuthoritiveEngineId      i (V3Header a b c d f) = V3Header a b c d (f { authoritiveEngineId = i })
+    setAuthoritiveEngineBoots   i (V3Header a b c d f) = V3Header a b c d (f { authoritiveEngineBoots = i })
+    setAuthoritiveEngineTime    i (V3Header a b c d f) = V3Header a b c d (f { authoritiveEngineTime = i })
+    setUserName                 i (V3Header a b c d f) = V3Header a b c d (f { userName = i })
+    setAuthenticationParameters i (V3Header a b c d f) = V3Header a b c d (f { authenticationParameters = i })
+    setPrivacyParameters        i (V3Header a b c d f) = V3Header a b c d (f { privacyParameters = i })
     setContextEngineID i (ScopedPDU _ b c) = ScopedPDU i b c
     setContextName i (ScopedPDU a _ b) = ScopedPDU a i b 
 
@@ -402,55 +424,81 @@ setCommunityP x p =
       newHeader = setCommunity x header
   in setHeader newHeader p
 
-getEngineId :: Packet -> EngineId
-getEngineId p = 
+getEngineIdP :: Packet -> EngineId
+getEngineIdP p = 
   let header = getHeader p :: Header V3
-      sp = getSecurityParameter header
-  in authoritiveEngineId sp
+  in getAuthoritiveEngineId header
 
+setEngineIdP :: EngineId -> Packet -> Packet
+setEngineIdP x p =
+  let header = getHeader p :: Header V3
+      newHeader = setAuthoritiveEngineId x header
+  in setHeader newHeader p
 
-setReportable :: Reportable -> Packet -> Packet
-setReportable r p = 
+getEngineBootsP :: Packet -> EngineBootId
+getEngineBootsP p = 
+  let header = getHeader p :: Header V3
+  in getAuthoritiveEngineBoots header
+
+setEngineBootsP :: EngineBootId -> Packet -> Packet
+setEngineBootsP x p =
+  let header = getHeader p :: Header V3
+      newHeader = setAuthoritiveEngineBoots x header
+  in setHeader newHeader p
+  
+getEngineTimeP :: Packet -> Integer
+getEngineTimeP p = 
+  let header = getHeader p :: Header V3
+  in getAuthoritiveEngineTime header
+
+setEngineTimeP :: Integer -> Packet -> Packet
+setEngineTimeP x p =
+  let header = getHeader p :: Header V3
+      newHeader = setAuthoritiveEngineTime x header
+  in setHeader newHeader p
+
+setReportableP :: Reportable -> Packet -> Packet
+setReportableP r p = 
   let header = getHeader p :: Header V3
       Flag _ a = getFlag header
       newHeader = setFlag (Flag r a) header
   in setHeader newHeader p
 
-setPrivAuth :: PrivAuth -> Packet -> Packet
-setPrivAuth x p = 
+setPrivAuthP :: PrivAuth -> Packet -> Packet
+setPrivAuthP x p = 
   let header = getHeader p :: Header V3
       Flag r _ = getFlag header
       newHeader = setFlag (Flag r x) header
   in setHeader newHeader p
 
-setUserName :: ByteString -> Packet -> Packet 
-setUserName x p = 
+setUserNameP :: ByteString -> Packet -> Packet 
+setUserNameP x p = 
   let header = getHeader p :: Header V3
       sp = getSecurityParameter header
       newHeader = setSecurityParameter (sp { userName = x }) header
   in setHeader newHeader p
 
-setAuthenticationParameters :: ByteString -> Packet -> Packet 
-setAuthenticationParameters x p = 
+setAuthenticationParametersP :: ByteString -> Packet -> Packet 
+setAuthenticationParametersP x p = 
   let header = getHeader p :: Header V3
       sp = getSecurityParameter header
       newHeader = setSecurityParameter (sp { authenticationParameters = x }) header
   in setHeader newHeader p
   
-getAuthenticationParameters :: Packet -> ByteString
-getAuthenticationParameters p = 
+getAuthenticationParametersP :: Packet -> ByteString
+getAuthenticationParametersP p = 
   let header = getHeader p :: Header V3
   in authenticationParameters (getSecurityParameter header)
 
-setPrivParameters :: ByteString -> Packet -> Packet 
-setPrivParameters x p = 
+setPrivParametersP :: ByteString -> Packet -> Packet 
+setPrivParametersP x p = 
   let header = getHeader p :: Header V3
       sp = getSecurityParameter header
       newHeader = setSecurityParameter (sp { privacyParameters = x }) header
   in setHeader newHeader p
 
-getPrivParameters :: Packet -> ByteString
-getPrivParameters p =
+getPrivParametersP :: Packet -> ByteString
+getPrivParametersP p =
   let header = getHeader p :: Header V3
   in privacyParameters $ getSecurityParameter header
 
@@ -844,7 +892,7 @@ signPacket :: AuthType -> Key -> Packet -> Packet
 signPacket at key packet = 
     let packetAsBin = encode packet
         sign = B.take 12 $ HMAC.hmac (hash at) 64 key packetAsBin 
-    in setAuthenticationParameters sign packet
+    in setAuthenticationParametersP sign packet
 
 -- | create auth key from password and context engine id
 passwordToKey :: AuthType -> Password -> EngineId -> Key
@@ -859,38 +907,11 @@ type EngineBootId = Integer
 type PrivacyParameter = ByteString
 type EngineId = ByteString
 
-pk :: ByteString
-pk = "helloallhelloall"
-eb :: Integer
-eb = 40
-
-testEID :: ByteString
-testEID = "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
-
-testPriv :: ByteString
-testPriv = "helloall"
-
-testSalt :: ByteString
-testSalt = "\NUL\NUL\NUL\SOH<\175\244\201"
-
-testBody :: ByteString
-testBody = "w\175\166{\142,\144s\248\b\252t\FS\229I\152\EM\f\193F0\ETX\207\SYN\193\155i\177\190\213J\239\128\154<\128{\a\194\255Y8\155+\194\161\ESCM\191\184\161%v\184\220\145"
-
-testSalt1 :: ByteString
-testSalt1 = "D`\137\ETB\154\178\US\200" 
-
-testBody1 :: ByteString
-testBody1 = "&u\211\129\SYN\DC4\156mb\175\207\162\135B\217\204\ETBr\231\DLE\197\223\ESC\180\192\173\148\&2@\242\ETX\226\191\134\149B5Y?l\198\129\151\204\154J\250cE\NAKU\205)\162\193_"
-
-testEID1 :: ByteString
-testEID1 = "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
-
-
 encryptPacket :: PrivType -> Key -> Packet -> Packet
 encryptPacket DES key packet = 
     let eib = authoritiveEngineBoots $ getSecurityParameter $ (getHeader packet :: Header V3)
         (encrypted, salt) = desEncrypt key eib (encode $ (getPDU packet :: PDU V3))
-    in setPrivParameters salt . setPDU (CryptedPDU encrypted) $ packet
+    in setPrivParametersP salt . setPDU (CryptedPDU encrypted) $ packet
 encryptPacket _ _ _ = error "not implement"
 
 desEncrypt :: Key -> EngineBootId -> ByteString -> (ByteString, ByteString)
@@ -922,7 +943,7 @@ toSalt x y = B.pack
 decryptPacket :: PrivType -> Key -> Packet -> Packet
 decryptPacket DES key packet = 
     let pdu = getPDU packet :: PDU V3
-        salt = getPrivParameters packet
+        salt = getPrivParametersP packet
     in case pdu of
          CryptedPDU x -> setPDU (decode (desDecrypt key salt x) :: PDU V3) packet
          _ -> packet

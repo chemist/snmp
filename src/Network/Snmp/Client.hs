@@ -50,6 +50,5 @@ client conf@ConfigV3{..}  = clientV3 hostname
                                      authPass       
                                      privPass       
                                      sequrityLevel  
-                                     context        
                                      authType       
                                      privType      
