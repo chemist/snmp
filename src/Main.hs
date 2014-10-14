@@ -59,7 +59,7 @@ conf3 = (defConfig Version3) { hostname = "salt"
                              , privPass = "helloall"
                              , authType = SHA
         --                     , privType = DES
-                             , sequrityLevel = AuthNoPriv
+                             , sequrityLevel = AuthPriv
                              } 
 
 -- clientV3 hostname port timeout sequrityName authPass privPass sequrityLevel context authType privType = do

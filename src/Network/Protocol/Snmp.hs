@@ -91,11 +91,15 @@ module Network.Protocol.Snmp (
 , desEncrypt
 , desDecrypt
 , encryptPacket
+, decryptPacket
+, toSalt
 -- , stripBS
 -- * exceptions
 , ClientException(..) 
 -- * usage example
 -- $example
+, decodeASN1'
+, DER
 )
 where
 
@@ -445,6 +449,11 @@ setPrivParameters x p =
       newHeader = setSecurityParameter (sp { privacyParameters = x }) header
   in setHeader newHeader p
 
+getPrivParameters :: Packet -> ByteString
+getPrivParameters p =
+  let header = getHeader p :: Header V3
+  in privacyParameters $ getSecurityParameter header
+
 
 getVersion :: Packet -> Version
 getVersion (V2Packet v _ _) = v
@@ -643,7 +652,7 @@ instance ASN1Object Flag where
     fromASN1 asn = flip runParseASN1State asn $ do
         OctetString x <- getNext
         let [w] = B.unpack x
-        trace (show w) return $ case (testBit w 0, testBit w 1) of
+        return $ case (testBit w 0, testBit w 1) of
                       (True, True) -> Flag (testBit w 2) AuthPriv
                       (False, False) -> Flag (testBit w 2) NoAuthNoPriv
                       (True, False) -> Flag (testBit w 2) AuthNoPriv
@@ -689,6 +698,16 @@ parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
      OctetString msgPrivacyParameters <- getNext
      End Sequence <- getNext
      return $ SecurityParameter msgAuthoritiveEngineId msgAuthoritiveEngineBoots msgAuthoritiveEngineTime msgUserName msgAuthenticationParameters msgPrivacyParameters 
+
+instance Pack (PDU V3) where
+    encode s = encodeASN1' DER $ toASN1 s []
+    decode = toP
+
+toP :: ByteString -> PDU V3
+toP bs = let a = fromASN1 <$> decodeASN1' DER bs
+         in case a of
+                 Right (Right (r, _)) -> r
+                 e -> error $ "bad pdu" ++ show e
 
 instance Pack Packet where
     encode s = encodeASN1' DER $ toASN1 s []
@@ -848,9 +867,6 @@ eb = 40
 testEID :: ByteString
 testEID = "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
 
-testEID1 :: ByteString
-testEID1 = "\128\NUL\US\136\128P\247.l\SO\203\GST\NUL\NUL\NUL\NUL"
-
 testPriv :: ByteString
 testPriv = "helloall"
 
@@ -861,40 +877,57 @@ testBody :: ByteString
 testBody = "w\175\166{\142,\144s\248\b\252t\FS\229I\152\EM\f\193F0\ETX\207\SYN\193\155i\177\190\213J\239\128\154<\128{\a\194\255Y8\155+\194\161\ESCM\191\184\161%v\184\220\145"
 
 testSalt1 :: ByteString
-testSalt1 = "\NUL\NUL\NUL\ETB\243\137\129\156"
+testSalt1 = "D`\137\ETB\154\178\US\200" 
 
 testBody1 :: ByteString
-testBody1 = "\237;x;wT\208\230\199\178\STX\DLE\ENQ\166\150\193\240\184\151\EOT\NAKj\215E\195\229\219\n\192\166\153\184\215\209\205k\163Y0\170\146C\206\206\EOT\236\SI\193\184X.\234\131\133\241\DLE*\129\204\179.\188\141\197"
+testBody1 = "&u\211\129\SYN\DC4\156mb\175\207\162\135B\217\204\ETBr\231\DLE\197\223\ESC\180\192\173\148\&2@\242\ETX\226\191\134\149B5Y?l\198\129\151\204\154J\250cE\NAKU\205)\162\193_"
+
+testEID1 :: ByteString
+testEID1 = "\128\NUL\US\136\128v\224\131\SI|\155\SUBT\NUL\NUL\NUL\NUL"
+
 
 encryptPacket :: PrivType -> Key -> Packet -> Packet
 encryptPacket DES key packet = 
     let eib = authoritiveEngineBoots $ getSecurityParameter $ (getHeader packet :: Header V3)
-        body = encodeASN1' DER $ toASN1 (getPDU packet :: PDU V3) []
-        encrypted = desEncrypt key eib body 
-    in setPrivParameters (B.take 8 key) . setPDU (CryptedPDU encrypted) $ packet
+        (encrypted, salt) = desEncrypt key eib (encode $ (getPDU packet :: PDU V3))
+    in setPrivParameters salt . setPDU (CryptedPDU encrypted) $ packet
 encryptPacket _ _ _ = error "not implement"
 
-desEncrypt :: Key -> EngineBootId -> ByteString -> ByteString
+desEncrypt :: Key -> EngineBootId -> ByteString -> (ByteString, ByteString)
 desEncrypt privKey engineBoot dataToEncrypt = 
     let desKey = B.take 8 privKey
         preIV = B.drop 8 $ B.take 16 privKey
-        localInt = 100
-        eB = fromIntegral engineBoot
-        salt  = [ (shiftR eB 24 .&. 0xff) :: Word8
-                , shiftR eB 16 .&. 0xff
-                , shiftR eB 8  .&. 0xff
-                , shiftR eB 0  .&. 0xff
-                , (shiftR localInt 24   .&. 0xff) :: Word8
-                , shiftR localInt 16   .&. 0xff
-                , shiftR localInt  8   .&. 0xff
-                , shiftR localInt  0   .&. 0xff
-                ] 
-        ivR = map (uncurry xor) $ zip (B.unpack preIV) salt
-        Just iv = Priv.makeIV (B.pack ivR)
+        localInt = 1000 
+        salt = toSalt engineBoot localInt
+        ivR = B.pack $ map (uncurry xor) $ zip (B.unpack preIV) (B.unpack salt)
+        Just iv = Priv.makeIV ivR
         Right key = Priv.makeKey desKey 
         des = Priv.cipherInit key :: Priv.DES
-    in Priv.cbcEncrypt des iv dataToEncrypt
+        tailLen = (8 - B.length(dataToEncrypt) `rem` 8) `rem` 8
+        tailB = B.replicate tailLen 0x00
+    in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
+
+toSalt :: Integer -> Integer -> ByteString
+toSalt x y = B.pack
+  [ fromIntegral $ x `shiftR` 24 .&. 0xff 
+  , fromIntegral $ x `shiftR` 16 .&. 0xff
+  , fromIntegral $ x `shiftR`  8 .&. 0xff
+  , fromIntegral $ x `shiftR`  0 .&. 0xff
+  , fromIntegral $ y `shiftR` 24 .&. 0xff
+  , fromIntegral $ y `shiftR` 16 .&. 0xff
+  , fromIntegral $ y `shiftR`  8 .&. 0xff
+  , fromIntegral $ y `shiftR`  0 .&. 0xff
+  ]
         
+decryptPacket :: PrivType -> Key -> Packet -> Packet
+decryptPacket DES key packet = 
+    let pdu = getPDU packet :: PDU V3
+        salt = getPrivParameters packet
+    in case pdu of
+         CryptedPDU x -> setPDU (decode (desDecrypt key salt x) :: PDU V3) packet
+         _ -> packet
+decryptPacket _ _ _ = error "non implemented"
+
 desDecrypt :: Key -> PrivacyParameter -> ByteString -> ByteString
 desDecrypt privKey privParameters dataToDecrypt =
     let desKey = B.take 8 privKey
@@ -905,7 +938,6 @@ desDecrypt privKey privParameters dataToDecrypt =
         Right key = Priv.makeKey desKey
         des = Priv.cipherInit key :: Priv.DES
     in stripBS $ Priv.cbcDecrypt des iv dataToDecrypt
-
 
 stripBS :: ByteString -> ByteString
 stripBS bs = 
