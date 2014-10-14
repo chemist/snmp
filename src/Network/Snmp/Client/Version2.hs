@@ -91,8 +91,8 @@ clientV2 hostname port timeout community = do
         { get = get'
         , bulkget = bulkget'
         , getnext = getnext'
-        , walk = \oids -> mconcat <$> mapM (\oi -> withSocketsDo $ walk' oi oi mempty) oids
-        , bulkwalk = \oids -> mconcat <$> mapM (\oi -> withSocketsDo $ bulkwalk' oi oi mempty) oids
+        , walk = \oids -> mconcat <$> mapM (\oi -> walk' oi oi mempty) oids
+        , bulkwalk = \oids -> mconcat <$> mapM (\oi -> bulkwalk' oi oi mempty) oids
         , set = set' 
         , close = trace "close socket" $ NS.close socket
         } 

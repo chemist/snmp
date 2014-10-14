@@ -907,18 +907,17 @@ type EngineBootId = Integer
 type PrivacyParameter = ByteString
 type EngineId = ByteString
 
-encryptPacket :: PrivType -> Key -> Packet -> Packet
-encryptPacket DES key packet = 
+encryptPacket :: PrivType -> Key -> Integer -> Packet -> Packet
+encryptPacket DES key localInt packet = 
     let eib = authoritiveEngineBoots $ getSecurityParameter $ (getHeader packet :: Header V3)
-        (encrypted, salt) = desEncrypt key eib (encode $ (getPDU packet :: PDU V3))
+        (encrypted, salt) = desEncrypt key eib localInt (encode $ (getPDU packet :: PDU V3))
     in setPrivParametersP salt . setPDU (CryptedPDU encrypted) $ packet
-encryptPacket _ _ _ = error "not implement"
+encryptPacket _ _ _ _ = error "not implement"
 
-desEncrypt :: Key -> EngineBootId -> ByteString -> (ByteString, ByteString)
-desEncrypt privKey engineBoot dataToEncrypt = 
+desEncrypt :: Key -> EngineBootId -> Integer -> ByteString -> (ByteString, ByteString)
+desEncrypt privKey engineBoot localInt dataToEncrypt = 
     let desKey = B.take 8 privKey
         preIV = B.drop 8 $ B.take 16 privKey
-        localInt = 1000 
         salt = toSalt engineBoot localInt
         ivR = B.pack $ map (uncurry xor) $ zip (B.unpack preIV) (B.unpack salt)
         Just iv = Priv.makeIV ivR
