@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GADTs #-}
 module Network.Snmp.Client.Version3 
 -- ( clientV3
 -- , msg
@@ -28,6 +29,8 @@ import Data.Monoid ((<>), mempty, mconcat)
 import Data.Bits (xor)
 import Data.Word (Word8)
 import Control.Exception 
+import System.Random
+import Data.Word
 import Debug.Trace
 
 import Network.Protocol.Snmp
@@ -40,9 +43,10 @@ v3 = initial Version3
 data ST = ST
   { authCache' :: IORef (Maybe ByteString)
   , privCache' :: IORef (Maybe ByteString)
-  , engine' :: IORef (Maybe (ByteString, Integer, Integer))
-  , ref' :: IORef Integer
-  , saltInt' :: IORef Integer
+  , engine' :: IORef (Maybe (ByteString, Word32, Word32))
+  , ref' :: IORef Word32
+  , salt32 :: IORef Word32
+  , salt64 :: IORef Word64
   , securityLevel' :: PrivAuth
   , authType' :: AuthType
   , privType' :: PrivType
@@ -58,11 +62,12 @@ clientV3 hostname port timeout sequrityName authPass privPass securityLevel auth
     socket <- makeSocket hostname port 
     uniqInteger <- uniqID
     ref <- newIORef uniqInteger
-    saltInt <- newIORef 1
+    salt32 <- newIORef =<< randomIO
+    salt64 <- newIORef =<< randomIO
     authCache <- newIORef Nothing
     privCache <- newIORef Nothing
     engine <- newIORef Nothing
-    let st = ST authCache privCache engine ref saltInt securityLevel authType privType timeout socket sequrityName authPass privPass
+    let st = ST authCache privCache engine ref salt32 salt64 securityLevel authType privType timeout socket sequrityName authPass privPass
     return $ Client 
       { get = get' st
       , bulkget = bulkget' st
@@ -74,7 +79,7 @@ clientV3 hostname port timeout sequrityName authPass privPass securityLevel auth
       }
 
 
-init' :: ST -> IO (ByteString, Integer, Integer)
+init' :: ST -> IO (ByteString, Word32, Word32)
 init' st = withSocketsDo $ do
     rid <- predCounter (ref' st)
     sendAll (socket' st) $ encode $ packet rid
@@ -212,13 +217,10 @@ encryptPacketWithCache st packet
     | otherwise = return packet
         where
           newKey packet = do
-              s <- succCounter (saltInt' st)
               let key = passwordToKey (authType' st) (privPass' st) (getEngineIdP packet)
               atomicWriteIORef (privCache' st) (Just key)
-              return $ encryptPacket (privType' st) key s packet  
-          reuseKey packet key = do
-              s <- succCounter (saltInt' st)
-              return $ encryptPacket (privType' st) key s packet
+              encryptPacket st key packet  
+          reuseKey packet key = encryptPacket st key packet
 
 decryptPacketWithCache :: ST -> Packet -> IO Packet
 decryptPacketWithCache st packet = do
@@ -228,6 +230,37 @@ decryptPacketWithCache st packet = do
     newKey packet = do
         let key = passwordToKey (authType' st) (privPass' st) (getEngineIdP packet)
         atomicWriteIORef (privCache' st) (Just key)
-        return $ decryptPacket (privType' st) key packet
-    reuseKey packet key = return $ decryptPacket (privType' st) key packet
+        return $ decryptPacket st key packet
+    reuseKey packet key = return $ decryptPacket st key packet
+ 
+encryptPacket :: ST -> Key -> Packet -> IO Packet
+encryptPacket st key packet 
+  | privType' st == DES = do
+      s <- succCounter (salt32 st)
+      let eib = getEngineBootsP packet
+          (encrypted, salt) = desEncrypt key eib s (encode $ (getPDU packet :: PDU V3))
+      return $ setPrivParametersP salt . setPDU (CryptedPDU encrypted) $ packet
+  | privType' st == AES = do
+      s <- succCounter (salt64 st)
+      let eib = getEngineBootsP packet
+          t = getEngineTimeP packet
+          (encrypted, salt) = aesEncrypt key eib t s (encode $ (getPDU packet :: PDU V3))
+      return $ setPrivParametersP salt . setPDU (CryptedPDU encrypted) $ packet
+
+decryptPacket :: ST -> Key -> Packet -> Packet
+decryptPacket st key packet
+  | privType' st == DES = 
+      let pdu = getPDU packet :: PDU V3
+          salt = getPrivParametersP packet
+      in case pdu of
+              CryptedPDU x -> setPDU (decode (desDecrypt key salt x) :: PDU V3) packet
+              _ -> packet
+  | privType' st == AES =
+      let pdu = getPDU packet :: PDU V3
+          salt = getPrivParametersP packet
+          eib = getEngineBootsP packet
+          t = getEngineTimeP packet
+      in case pdu of
+              CryptedPDU x -> setPDU (decode (aesDecrypt key salt eib t x) :: PDU V3) packet
+              _ -> packet
 

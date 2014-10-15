@@ -32,11 +32,19 @@ makeSocket hostname port = do
     connect sock (addrAddress serverAddress)
     return sock
 
-succCounter :: IORef Integer -> IO Integer
-succCounter ref = atomicModifyIORef' ref  (\x -> (succ x, succ x))
-
-predCounter :: IORef Integer -> IO Integer
-predCounter ref = atomicModifyIORef' ref  (\x -> (pred x, pred x))
+succCounter :: (Bounded a, Integral a) => IORef a -> IO a
+succCounter ref = atomicModifyIORef' ref  check 
+    where
+      check x 
+        | x < maxBound  = (succ x, succ x)
+        | otherwise = (0, 0)
+          
+predCounter :: (Bounded a, Integral a) => IORef a -> IO a
+predCounter ref = atomicModifyIORef' ref  check 
+    where
+      check x
+        | x > 0 = (pred x, pred x)
+        | otherwise = (maxBound, maxBound)
 
 lastS :: Suite -> Coupla
 lastS (Suite xs) = last xs
@@ -45,7 +53,7 @@ isUpLevel :: OID -> OID -> Bool
 isUpLevel new old = let baseLength = length old
                     in old /= take baseLength new 
 
-uniqID :: IO Integer
+uniqID :: IO Word32
 uniqID = do
     nf <- getNetworkInterfaces
     let zeroMac = MAC 0 0 0 0 0 0
@@ -54,8 +62,8 @@ uniqID = do
         ipToW (IPv4 x) = x
     return $ case filter (\x -> ipv4 x /= zeroIp && mac x /= zeroMac ) nf of
          [] -> 1000000 -- i cant find ip address
-         [x] -> toInteger $ ipToW (ipv4 x)
-         x:_ -> toInteger $ ipToW (ipv4 x)
+         [x] -> ipToW (ipv4 x)
+         x:_ -> ipToW (ipv4 x)
 
 
 
