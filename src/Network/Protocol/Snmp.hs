@@ -28,7 +28,7 @@ module Network.Protocol.Snmp (
 , Reportable
 , PrivAuth(..)
 -- ** PDU
-, PDU
+, PDU (CryptedPDU)
 -- *** PDU universal
 , Request(..)
 , RequestId
@@ -77,6 +77,8 @@ module Network.Protocol.Snmp (
 , setEngineBootsP
 , getEngineTimeP
 , setEngineTimeP
+, getPrivParametersP
+, setPrivParametersP
 -- * authentication
 , passwordToKey
 , signPacket
@@ -88,8 +90,8 @@ module Network.Protocol.Snmp (
 -- * priv
 , desEncrypt
 , desDecrypt
-, encryptPacket
-, decryptPacket
+, aesEncrypt
+, aesDecrypt
 , toSalt
 -- , stripBS
 -- * exceptions
@@ -104,7 +106,7 @@ where
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
-import Data.Word (Word8, Word32)
+import Data.Word (Word8, Word32, Word64)
 import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
 import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
 import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1(..), getNextContainer, onNextContainer, getMany)
@@ -119,6 +121,7 @@ import qualified Crypto.Hash.SHA1 as Sha
 import qualified Crypto.MAC.HMAC as HMAC
 import qualified Crypto.Cipher.Types as Priv
 import qualified Crypto.Cipher.DES as Priv
+import qualified Crypto.Cipher.AES as Priv
 import Data.IORef (newIORef, IORef, readIORef, atomicWriteIORef)
 import Debug.Trace (trace)
 
@@ -217,7 +220,7 @@ data Value = Simple ASN1
            deriving (Show, Eq)
 
 -- | Request id 
-type RequestId = Integer
+type RequestId = Word32
 
 -- | Error status 
 type ErrorStatus = Integer
@@ -248,7 +251,7 @@ newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
 newtype Community = Community ByteString deriving (Show, Eq)
 
 -- | (snmp3 only) Message Identifier (like RequestId in PDU)
-newtype ID = ID Integer deriving (Show, Eq)
+newtype ID = ID Word32 deriving (Show, Eq)
 
 -- | (snmp3 only) Message max size must be > 484
 newtype MaxSize = MaxSize Integer deriving (Show, Eq)
@@ -268,8 +271,8 @@ data SecurityModel = UserBasedSecurityModel deriving (Show, Eq)
 -- | (snmp3 only) rfc3412, security parameter
 data SecurityParameter = SecurityParameter 
   { authoritiveEngineId :: ByteString
-  , authoritiveEngineBoots :: Integer
-  , authoritiveEngineTime :: Integer
+  , authoritiveEngineBoots :: Word32
+  , authoritiveEngineTime :: Word32
   , userName :: ByteString
   , authenticationParameters :: ByteString
   , privacyParameters :: ByteString
@@ -310,8 +313,8 @@ class HasV3 a where
     getSecurityModel :: Header a -> SecurityModel
     getSecurityParameter :: Header a -> SecurityParameter
     getAuthoritiveEngineId :: Header a -> ByteString
-    getAuthoritiveEngineBoots :: Header a -> Integer
-    getAuthoritiveEngineTime :: Header a -> Integer
+    getAuthoritiveEngineBoots :: Header a -> Word32
+    getAuthoritiveEngineTime :: Header a -> Word32
     getUserName :: Header a -> ByteString
     getAuthenticationParameters :: Header a -> ByteString
     getPrivacyParameters :: Header a -> ByteString
@@ -323,8 +326,8 @@ class HasV3 a where
     setSecurityModel :: SecurityModel -> Header a -> Header a
     setSecurityParameter :: SecurityParameter -> Header a -> Header a
     setAuthoritiveEngineId :: ByteString -> Header a -> Header a
-    setAuthoritiveEngineBoots :: Integer -> Header a -> Header a
-    setAuthoritiveEngineTime :: Integer -> Header a -> Header a
+    setAuthoritiveEngineBoots :: Word32 -> Header a -> Header a
+    setAuthoritiveEngineTime :: Word32 -> Header a -> Header a
     setUserName :: ByteString -> Header a -> Header a
     setAuthenticationParameters :: ByteString -> Header a -> Header a
     setPrivacyParameters :: ByteString -> Header a -> Header a
@@ -446,12 +449,12 @@ setEngineBootsP x p =
       newHeader = setAuthoritiveEngineBoots x header
   in setHeader newHeader p
   
-getEngineTimeP :: Packet -> Integer
+getEngineTimeP :: Packet -> Word32
 getEngineTimeP p = 
   let header = getHeader p :: Header V3
   in getAuthoritiveEngineTime header
 
-setEngineTimeP :: Integer -> Packet -> Packet
+setEngineTimeP :: Word32 -> Packet -> Packet
 setEngineTimeP x p =
   let header = getHeader p :: Header V3
       newHeader = setAuthoritiveEngineTime x header
@@ -559,23 +562,24 @@ instance ASN1Object (Header V3) where
         V3Header <$> (sS *> getObject) <*> getObject <*> getObject <*> (getObject <* eS) <*> getObject
 
 instance ASN1Object (PDU V2) where
-    toASN1 (PDU (GetRequest rid _ _    ) sd) xs = (Start $ Container Context 0):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 0)] ++ xs
-    toASN1 (PDU (GetNextRequest rid _ _) sd) xs = (Start $ Container Context 1):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 1)] ++ xs
-    toASN1 (PDU (GetResponse rid es ei ) sd) xs = (Start $ Container Context 2):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 2)] ++ xs
-    toASN1 (PDU (SetRequest rid _ _    ) sd) xs = (Start $ Container Context 3):IntVal rid : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 3)] ++ xs
-    toASN1 (PDU (GetBulk rid es ei     ) sd) xs = (Start $ Container Context 5):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
-    toASN1 (PDU (Report rid es ei      ) sd) xs = (Start $ Container Context 8):IntVal rid : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 8)] ++ xs
+    toASN1 (PDU (GetRequest rid _ _    ) sd) xs = (Start $ Container Context 0):IntVal (fromIntegral rid) : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 0)] ++ xs
+    toASN1 (PDU (GetNextRequest rid _ _) sd) xs = (Start $ Container Context 1):IntVal (fromIntegral rid) : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 1)] ++ xs
+    toASN1 (PDU (GetResponse rid es ei ) sd) xs = (Start $ Container Context 2):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 2)] ++ xs
+    toASN1 (PDU (SetRequest rid _ _    ) sd) xs = (Start $ Container Context 3):IntVal (fromIntegral rid) : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 3)] ++ xs
+    toASN1 (PDU (GetBulk rid es ei     ) sd) xs = (Start $ Container Context 5):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
+    toASN1 (PDU (Report rid es ei      ) sd) xs = (Start $ Container Context 8):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 8)] ++ xs
     fromASN1 asn = flip runParseASN1State asn pduParser
 
 pduParser :: ParseASN1 (PDU V2)
 pduParser = do
     Start (Container Context n) <- getNext
-    IntVal rid <- getNext
+    IntVal rid' <- getNext
     IntVal es <- getNext
     IntVal ei <- getNext
     x <- getNextContainer Sequence 
     End (Container Context _) <- getNext
     let psuite = fromASN1 x
+        rid = fromIntegral rid'
     case (n, psuite) of
          (0, Right (suite, _)) -> return $ PDU (GetRequest     rid es ei) suite
          (1, Right (suite, _)) -> return $ PDU (GetNextRequest rid es ei) suite
@@ -677,10 +681,10 @@ instance Show SecurityParameter where
        ++ "\n\t\tPrivacyParameters: " ++ show (privacyParameters msg )
 
 instance ASN1Object ID where
-    toASN1 (ID x) xs = IntVal x : xs
+    toASN1 (ID x) xs = IntVal (fromIntegral x) : xs
     fromASN1 asn = flip runParseASN1State asn $ do
         IntVal x <- getNext
-        return $ ID x
+        return $ ID (fromIntegral x)
 
 instance ASN1Object MaxSize where
     toASN1 (MaxSize x) xs = IntVal x : xs
@@ -719,8 +723,8 @@ instance ASN1Object SecurityParameter where
     toASN1 SecurityParameter{..} xs = OctetString (encodeASN1' DER
       [ Start Sequence
       ,   OctetString authoritiveEngineId 
-      ,   IntVal authoritiveEngineBoots 
-      ,   IntVal authoritiveEngineTime 
+      ,   IntVal $ fromIntegral authoritiveEngineBoots 
+      ,   IntVal $ fromIntegral authoritiveEngineTime 
       ,   OctetString userName 
       ,   OctetString authenticationParameters 
       ,   OctetString privacyParameters 
@@ -745,7 +749,7 @@ parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
      OctetString msgAuthenticationParameters <- getNext
      OctetString msgPrivacyParameters <- getNext
      End Sequence <- getNext
-     return $ SecurityParameter msgAuthoritiveEngineId msgAuthoritiveEngineBoots msgAuthoritiveEngineTime msgUserName msgAuthenticationParameters msgPrivacyParameters 
+     return $ SecurityParameter msgAuthoritiveEngineId (fromIntegral msgAuthoritiveEngineBoots) (fromIntegral msgAuthoritiveEngineTime) msgUserName msgAuthenticationParameters msgPrivacyParameters 
 
 instance Pack (PDU V3) where
     encode s = encodeASN1' DER $ toASN1 s []
@@ -903,18 +907,11 @@ passwordToKey at pass eid =
 
 -----------------------------------------------------------------------------------------------------
 
-type EngineBootId = Integer
+type EngineBootId = Word32
 type PrivacyParameter = ByteString
 type EngineId = ByteString
 
-encryptPacket :: PrivType -> Key -> Integer -> Packet -> Packet
-encryptPacket DES key localInt packet = 
-    let eib = authoritiveEngineBoots $ getSecurityParameter $ (getHeader packet :: Header V3)
-        (encrypted, salt) = desEncrypt key eib localInt (encode $ (getPDU packet :: PDU V3))
-    in setPrivParametersP salt . setPDU (CryptedPDU encrypted) $ packet
-encryptPacket _ _ _ _ = error "not implement"
-
-desEncrypt :: Key -> EngineBootId -> Integer -> ByteString -> (ByteString, ByteString)
+desEncrypt :: Key -> EngineBootId -> Word32 -> ByteString -> (ByteString, ByteString)
 desEncrypt privKey engineBoot localInt dataToEncrypt = 
     let desKey = B.take 8 privKey
         preIV = B.drop 8 $ B.take 16 privKey
@@ -927,7 +924,31 @@ desEncrypt privKey engineBoot localInt dataToEncrypt =
         tailB = B.replicate tailLen 0x00
     in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
 
-toSalt :: Integer -> Integer -> ByteString
+type EngineTime = Word32
+
+aesEncrypt :: Key -> EngineBootId -> EngineTime -> Word64 -> ByteString -> (ByteString, ByteString)
+aesEncrypt privKey engineBoot engineTime rcounter dataToEncrypt =
+    let aesKey = B.take 16 $ privKey
+        salt = wToBs rcounter
+        Just iv = Priv.makeIV $ toSalt engineBoot engineTime <> salt
+        Right key = Priv.makeKey aesKey
+        aes = Priv.cipherInit key :: Priv.AES128
+    in (Priv.cfbEncrypt aes iv dataToEncrypt, salt)
+
+
+wToBs :: Word64 -> ByteString
+wToBs x = B.pack
+  [ fromIntegral $ x `shiftR` 56 .&. 0xff
+  , fromIntegral $ x `shiftR` 48 .&. 0xff
+  , fromIntegral $ x `shiftR` 40 .&. 0xff
+  , fromIntegral $ x `shiftR` 32 .&. 0xff
+  , fromIntegral $ x `shiftR` 24 .&. 0xff
+  , fromIntegral $ x `shiftR` 16 .&. 0xff
+  , fromIntegral $ x `shiftR` 8 .&. 0xff
+  , fromIntegral $ x `shiftR` 0 .&. 0xff
+  ]
+
+toSalt :: Word32 -> Word32 -> ByteString
 toSalt x y = B.pack
   [ fromIntegral $ x `shiftR` 24 .&. 0xff 
   , fromIntegral $ x `shiftR` 16 .&. 0xff
@@ -938,15 +959,6 @@ toSalt x y = B.pack
   , fromIntegral $ y `shiftR`  8 .&. 0xff
   , fromIntegral $ y `shiftR`  0 .&. 0xff
   ]
-        
-decryptPacket :: PrivType -> Key -> Packet -> Packet
-decryptPacket DES key packet = 
-    let pdu = getPDU packet :: PDU V3
-        salt = getPrivParametersP packet
-    in case pdu of
-         CryptedPDU x -> setPDU (decode (desDecrypt key salt x) :: PDU V3) packet
-         _ -> packet
-decryptPacket _ _ _ = error "non implemented"
 
 desDecrypt :: Key -> PrivacyParameter -> ByteString -> ByteString
 desDecrypt privKey privParameters dataToDecrypt =
@@ -958,6 +970,16 @@ desDecrypt privKey privParameters dataToDecrypt =
         Right key = Priv.makeKey desKey
         des = Priv.cipherInit key :: Priv.DES
     in stripBS $ Priv.cbcDecrypt des iv dataToDecrypt
+
+aesDecrypt :: Key -> PrivacyParameter -> EngineBootId -> EngineTime -> ByteString -> ByteString
+aesDecrypt privKey privParameters engineBoot engineTime dataToDecrypt =
+    let aesKey = B.take 16 $ privKey
+        salt = privParameters
+        ivR = toSalt engineBoot engineTime <> salt
+        Just iv = Priv.makeIV ivR
+        Right key = Priv.makeKey aesKey
+        aes = Priv.cipherInit key :: Priv.AES128
+    in stripBS $ Priv.cfbDecrypt aes iv dataToDecrypt
 
 stripBS :: ByteString -> ByteString
 stripBS bs = 
@@ -973,3 +995,4 @@ stripBS bs =
     where
       {- uintbs return the unsigned int represented by the bytes -}
       uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
+

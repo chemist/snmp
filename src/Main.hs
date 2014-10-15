@@ -54,11 +54,11 @@ conf2 = (defConfig Version2) { hostname = "salt"
                              } 
 conf3 :: Config
 conf3 = (defConfig Version3) { hostname = "salt" 
-                             , sequrityName = "sha"
-                             , authPass = "helloall"
-                             , privPass = "helloall"
+                             , sequrityName = "aes"
+                             , authPass = "helloallhello"
+                             , privPass = "helloallhello"
                              , authType = SHA
-        --                     , privType = DES
+                             , privType = AES
                              , sequrityLevel = AuthPriv
                              } 
 
