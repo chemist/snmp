@@ -27,6 +27,10 @@ module Network.Protocol.Snmp (
 , SecurityParameter(..)
 , Reportable
 , PrivAuth(..)
+, EngineBootId
+, PrivacyParameter
+, EngineTime
+, EngineId
 -- ** PDU
 , PDU (CryptedPDU)
 -- *** PDU universal
@@ -88,18 +92,20 @@ module Network.Protocol.Snmp (
 , Key
 , cleanPass
 -- * priv
+, Salt
+, Raw
+, Encrypted
+, Rand32
+, Rand64
 , desEncrypt
 , desDecrypt
 , aesEncrypt
 , aesDecrypt
 , toSalt
--- , stripBS
 -- * exceptions
 , ClientException(..) 
 -- * usage example
 -- $example
-, decodeASN1'
-, DER
 )
 where
 
@@ -109,12 +115,12 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8, Word32, Word64)
 import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
 import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
-import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1(..), getNextContainer, onNextContainer, getMany)
+import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1, getNextContainer, onNextContainer, getMany)
 import Data.ASN1.BinaryEncoding (DER(..))
 import Data.ASN1.Encoding (encodeASN1', decodeASN1')
 import Control.Applicative ((<$>), (<*>), (*>), (<*))
 import Data.Monoid (Monoid, (<>))
-import Control.Exception (Exception)
+import Control.Exception (Exception, throw)
 import Data.Typeable (Typeable)
 import qualified Crypto.Hash.MD5 as Md5
 import qualified Crypto.Hash.SHA1 as Sha
@@ -122,8 +128,7 @@ import qualified Crypto.MAC.HMAC as HMAC
 import qualified Crypto.Cipher.Types as Priv
 import qualified Crypto.Cipher.DES as Priv
 import qualified Crypto.Cipher.AES as Priv
-import Data.IORef (newIORef, IORef, readIORef, atomicWriteIORef)
-import Debug.Trace (trace)
+import Data.Int
 
 -- $example
 --
@@ -164,6 +169,9 @@ import Debug.Trace (trace)
 
 -----------------------------------------------------------------------------------------------------------------
 
+fI :: (Num b, Integral a) => a -> b
+fI = fromIntegral
+
 -- | Phantom type for version 2 (Header V2, PDU V2)
 data V2
 -- | Phantom type for version 3 (Header V3, PDU V3)
@@ -203,16 +211,16 @@ deriving instance Show (PDU a)
 deriving instance Eq (PDU a)
 
 -- | Snmp data types
-data Value = Simple ASN1
+data Value = OI OID
            | Zero
-           | Integer Integer
+           | Integer Int32
            | String ByteString
            | IpAddress Word8 Word8 Word8 Word8
-           | Counter32 Integer
-           | Gaude32 Integer
-           | TimeTicks Integer
+           | Counter32 Word32
+           | Gaude32 Word32
+           | TimeTicks Word32
            | Opaque ByteString
-           | Counter64 Integer
+           | Counter64 Word64
            | ZeroDotZero
            | NoSuchInstance
            | NoSuchObject
@@ -220,7 +228,7 @@ data Value = Simple ASN1
            deriving (Show, Eq)
 
 -- | Request id 
-type RequestId = Word32
+type RequestId = Int32
 
 -- | Error status 
 type ErrorStatus = Integer
@@ -240,7 +248,7 @@ data Request = GetRequest     { rid :: RequestId, es :: ErrorStatus, ei :: Error
              deriving (Show, Eq)
 
 -- | Coupla oid -> value
-data Coupla = Coupla { _oid :: OID, _value :: Value } deriving (Eq)
+data Coupla = Coupla { oid :: OID, value :: Value } deriving (Eq)
 
 -- | Variable bindings
 newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
@@ -251,7 +259,7 @@ newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
 newtype Community = Community ByteString deriving (Show, Eq)
 
 -- | (snmp3 only) Message Identifier (like RequestId in PDU)
-newtype ID = ID Word32 deriving (Show, Eq)
+newtype ID = ID Int32 deriving (Show, Eq)
 
 -- | (snmp3 only) Message max size must be > 484
 newtype MaxSize = MaxSize Integer deriving (Show, Eq)
@@ -271,8 +279,8 @@ data SecurityModel = UserBasedSecurityModel deriving (Show, Eq)
 -- | (snmp3 only) rfc3412, security parameter
 data SecurityParameter = SecurityParameter 
   { authoritiveEngineId :: ByteString
-  , authoritiveEngineBoots :: Word32
-  , authoritiveEngineTime :: Word32
+  , authoritiveEngineBoots :: Int32
+  , authoritiveEngineTime :: Int32
   , userName :: ByteString
   , authenticationParameters :: ByteString
   , privacyParameters :: ByteString
@@ -313,8 +321,8 @@ class HasV3 a where
     getSecurityModel :: Header a -> SecurityModel
     getSecurityParameter :: Header a -> SecurityParameter
     getAuthoritiveEngineId :: Header a -> ByteString
-    getAuthoritiveEngineBoots :: Header a -> Word32
-    getAuthoritiveEngineTime :: Header a -> Word32
+    getAuthoritiveEngineBoots :: Header a -> Int32
+    getAuthoritiveEngineTime :: Header a -> Int32
     getUserName :: Header a -> ByteString
     getAuthenticationParameters :: Header a -> ByteString
     getPrivacyParameters :: Header a -> ByteString
@@ -326,8 +334,8 @@ class HasV3 a where
     setSecurityModel :: SecurityModel -> Header a -> Header a
     setSecurityParameter :: SecurityParameter -> Header a -> Header a
     setAuthoritiveEngineId :: ByteString -> Header a -> Header a
-    setAuthoritiveEngineBoots :: Word32 -> Header a -> Header a
-    setAuthoritiveEngineTime :: Word32 -> Header a -> Header a
+    setAuthoritiveEngineBoots :: Int32 -> Header a -> Header a
+    setAuthoritiveEngineTime :: Int32 -> Header a -> Header a
     setUserName :: ByteString -> Header a -> Header a
     setAuthenticationParameters :: ByteString -> Header a -> Header a
     setPrivacyParameters :: ByteString -> Header a -> Header a
@@ -342,6 +350,7 @@ class Construct a where
 instance Construct (Version -> Packet) where
     initial Version3 = V3Packet Version3 initial initial
     initial Version2 = V2Packet Version2 initial initial
+    initial Version1 = error "not inplemented"
 
 instance Construct (Header V3) where
     initial = V3Header (ID 0) (MaxSize 65007) (Flag False NoAuthNoPriv) UserBasedSecurityModel initial
@@ -366,15 +375,23 @@ instance Construct Request where
 ----------------------------------------------------------------------------------------
 instance HasItem V2 where
     getHeader (V2Packet _ x _) = x
+    getHeader _ = undefined
     setHeader h (V2Packet v _ x) = V2Packet v h x
+    setHeader _ _ = undefined
     getPDU (V2Packet _ _ x) = x
+    getPDU _ = undefined
     setPDU p (V2Packet v h _) = V2Packet v h p
+    setPDU _ _ = undefined
 
 instance HasItem V3 where
     getHeader (V3Packet _ x _) = x
+    getHeader _ = undefined
     setHeader h (V3Packet v _ x) = V3Packet v h x
+    setHeader _ _ = undefined
     getPDU (V3Packet _ _ x) = x
+    getPDU _ = undefined
     setPDU p (V3Packet v h _) = V3Packet v h p
+    setPDU _ _ = undefined
 
 instance HasV2 V2 where
     getCommunity (V2Header c) = c
@@ -393,7 +410,9 @@ instance HasV3 V3 where
     getAuthenticationParameters = authenticationParameters . getSecurityParameter
     getPrivacyParameters = privacyParameters . getSecurityParameter
     getContextEngineID (ScopedPDU i _ _) = i
+    getContextEngineID _ = undefined
     getContextName (ScopedPDU _ i _) = i
+    getContextName _ = undefined
     setID i (V3Header _ a b c d) = V3Header i a b c d
     setMaxSize i (V3Header a _ b c d) = V3Header a i b c d
     setFlag i (V3Header a b _ c d) = V3Header a b i c d
@@ -406,7 +425,9 @@ instance HasV3 V3 where
     setAuthenticationParameters i (V3Header a b c d f) = V3Header a b c d (f { authenticationParameters = i })
     setPrivacyParameters        i (V3Header a b c d f) = V3Header a b c d (f { privacyParameters = i })
     setContextEngineID i (ScopedPDU _ b c) = ScopedPDU i b c
+    setContextEngineID _ _ = undefined
     setContextName i (ScopedPDU a _ b) = ScopedPDU a i b 
+    setContextName _ _ = undefined
 
 ----------------------------------------------------------------------------------------
 setIDP :: ID -> Packet -> Packet 
@@ -449,12 +470,12 @@ setEngineBootsP x p =
       newHeader = setAuthoritiveEngineBoots x header
   in setHeader newHeader p
   
-getEngineTimeP :: Packet -> Word32
+getEngineTimeP :: Packet -> Int32
 getEngineTimeP p = 
   let header = getHeader p :: Header V3
   in getAuthoritiveEngineTime header
 
-setEngineTimeP :: Word32 -> Packet -> Packet
+setEngineTimeP :: Int32 -> Packet -> Packet
 setEngineTimeP x p =
   let header = getHeader p :: Header V3
       newHeader = setAuthoritiveEngineTime x header
@@ -513,44 +534,54 @@ getVersion (V3Packet v _ _) = v
 getRid :: Packet -> RequestId 
 getRid (V2Packet _ _ (PDU r _)) = rid r 
 getRid (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = rid r 
+getRid _ = undefined
 
 setRid :: RequestId -> Packet -> Packet
 setRid r (V2Packet v h (PDU req s)) = V2Packet v h (PDU req { rid = r } s)
 setRid r (V3Packet v h (ScopedPDU a b (PDU req s))) = V3Packet v h (ScopedPDU a b (PDU req { rid = r } s))
+setRid _ _ = undefined
 
 getErrorStatus :: Packet -> ErrorStatus 
 getErrorStatus (V2Packet _ _ (PDU r _)) = es r 
 getErrorStatus (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = es r 
+getErrorStatus _ = undefined
 
 setErrorStatus :: ErrorStatus -> Packet -> Packet
 setErrorStatus e (V2Packet v h (PDU req s)) = V2Packet v h (PDU req { es = e } s)
 setErrorStatus e (V3Packet v h (ScopedPDU a b (PDU req s))) = V3Packet v h (ScopedPDU a b (PDU req { es = e } s))
+setErrorStatus _ _ = undefined
 
 getSuite :: Packet -> Suite
 getSuite (V2Packet _ _ (PDU _ r)) = r 
 getSuite (V3Packet _ _ (ScopedPDU _ _ (PDU _ r))) = r 
+getSuite _ = undefined
 
 setSuite :: Suite -> Packet -> Packet
 setSuite s (V2Packet v h (PDU req _)) = V2Packet v h (PDU req s)
 setSuite s (V3Packet v h (ScopedPDU a b (PDU req _))) = V3Packet v h (ScopedPDU a b (PDU req s))
+setSuite _ _ = undefined
 
 getRequest :: Packet -> Request
 getRequest (V2Packet _ _ (PDU r _)) = r 
 getRequest (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = r 
+getRequest _ = undefined
 
 setRequest :: Request -> Packet -> Packet
 setRequest req (V2Packet v h (PDU _ s)) = V2Packet v h (PDU req s)
 setRequest req (V3Packet v h (ScopedPDU a b (PDU _ s))) = V3Packet v h (ScopedPDU a b (PDU req s))
+setRequest _ _ = undefined
 ----------------------------------------------------------------------------------------
 
 instance ASN1Object (Header V2) where
-    toASN1 (V2Header c) xs = toASN1 c xs 
+    toASN1 (V2Header c) = toASN1 c 
     fromASN1 asn = flip runParseASN1State asn $ V2Header <$> getObject
 
+sS :: ParseASN1 ()
 sS = do
     Start Sequence <- getNext
     return ()
 
+eS :: ParseASN1 ()
 eS = do
     End Sequence <- getNext
     return ()
@@ -567,8 +598,10 @@ instance ASN1Object (PDU V2) where
     toASN1 (PDU (GetResponse rid es ei ) sd) xs = (Start $ Container Context 2):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 2)] ++ xs
     toASN1 (PDU (SetRequest rid _ _    ) sd) xs = (Start $ Container Context 3):IntVal (fromIntegral rid) : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 3)] ++ xs
     toASN1 (PDU (GetBulk rid es ei     ) sd) xs = (Start $ Container Context 5):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
+    toASN1 (PDU (Inform rid es ei     ) sd) xs = (Start $ Container Context 6):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
+    toASN1 (PDU (V2Trap rid es ei     ) sd) xs = (Start $ Container Context 7):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
     toASN1 (PDU (Report rid es ei      ) sd) xs = (Start $ Container Context 8):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 8)] ++ xs
-    fromASN1 asn = flip runParseASN1State asn pduParser
+    fromASN1 asn = runParseASN1State pduParser asn 
 
 pduParser :: ParseASN1 (PDU V2)
 pduParser = do
@@ -586,12 +619,14 @@ pduParser = do
          (2, Right (suite, _)) -> return $ PDU (GetResponse    rid es ei) suite
          (3, Right (suite, _)) -> return $ PDU (SetRequest     rid es ei) suite
          (5, Right (suite, _)) -> return $ PDU (GetBulk        rid es ei) suite
+         (6, Right (suite, _)) -> return $ PDU (Inform         rid es ei) suite
+         (7, Right (suite, _)) -> return $ PDU (V2Trap         rid es ei) suite
          (8, Right (suite, _)) -> return $ PDU (Report         rid es ei) suite
-         e -> error $ "cant parse PDU " ++ show e
+         _ -> throw $ ServerException 9
 
 instance ASN1Object (PDU V3) where
     toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs = 
-      [Start Sequence, OctetString x, OctetString y] ++ (toASN1 pdu (End Sequence :xs))
+      [Start Sequence, OctetString x, OctetString y] ++ toASN1 pdu (End Sequence :xs)
     toASN1 (CryptedPDU cryptedBody) xs = OctetString cryptedBody : xs
     fromASN1 asn = flip runParseASN1State asn $ do
         whatIs <- getNext
@@ -603,6 +638,7 @@ instance ASN1Object (PDU V3) where
                  End Sequence <- getNext
                  return $ ScopedPDU (ContextEngineID x) (ContextName y) p
              OctetString x -> return $ CryptedPDU x
+             _ -> throw $ ServerException 9
 
 instance ASN1Object Version where
     toASN1 Version1 xs = IntVal 0 : xs
@@ -614,56 +650,60 @@ instance ASN1Object Version where
              0 -> return Version1
              1 -> return Version2
              3 -> return Version3
+             _ -> throw $ ServerException 10
 
 instance ASN1Object Packet where
     toASN1 (V2Packet Version2 header body) _ = Start Sequence : toASN1 Version2 (toASN1 header (toASN1 body [End Sequence]))
     toASN1 (V3Packet Version3 header body) _ = Start Sequence : toASN1 Version3 (toASN1 header (toASN1 body [End Sequence]))
+    toASN1 _ _ = throw $ ServerException 10
     fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
         v <- getObject
         case v of
              Version2 -> V2Packet Version2 <$> getObject <*> getObject
              Version3 -> V3Packet Version3 <$> getObject <*> getObject
+             _ -> throw $ ServerException 10
 
 instance ASN1Object Value where
     toASN1 NoSuchObject xs = Other Context 0 "" : xs
     toASN1 NoSuchInstance xs = Other Context 1 "" : xs
     toASN1 EndOfMibView xs = Other Context 2 "" : xs
-    toASN1 (Simple x) xs = x : xs
+    toASN1 (OI x) xs = OID x : xs
     toASN1 Zero xs = Null : xs
     toASN1 ZeroDotZero xs = OID [0,0] : xs
-    toASN1 (Integer x) xs = IntVal x : xs
+    toASN1 (Integer x) xs = IntVal (fI x) : xs
     toASN1 (String x) xs = OctetString x : xs
     toASN1 (IpAddress a1 a2 a3 a4) xs = Other Application 0 (B.pack [a1, a2, a3, a4]) : xs
-    toASN1 (Counter32 x) xs = Other Application 1 (packInteger x) : xs
-    toASN1 (Gaude32 x) xs = Other Application 2 (packInteger x) : xs
-    toASN1 (TimeTicks x) xs = Other Application 3 (packInteger x) : xs
+    toASN1 (Counter32 x) xs = Other Application 1 (packInteger (fI x)) : xs
+    toASN1 (Gaude32 x) xs = Other Application 2 (packInteger (fI x)) : xs
+    toASN1 (TimeTicks x) xs = Other Application 3 (packInteger (fI x)) : xs
     toASN1 (Opaque x) xs = Other Application 4 x : xs
-    toASN1 (Counter64 x) xs = Other Application 6 (packInteger x) : xs
-    fromASN1 asn = flip runParseASN1State asn (unp =<< getNext)
+    toASN1 (Counter64 x) xs = Other Application 6 (packInteger (fI x)) : xs
+    fromASN1 asn = runParseASN1State (unp =<< getNext) asn
       where
       unp (Other Context 0 "") = return NoSuchObject
       unp (Other Context 1 "") = return NoSuchInstance
       unp (Other Context 2 "") = return EndOfMibView
       unp Null = return Zero
       unp (OID [0,0]) = return ZeroDotZero
-      unp (IntVal x) = return $ Integer x
+      unp (IntVal x) = return $ Integer (fI x)
       unp (OctetString x) = return $ String x
       unp (Other Application 0 y) = let [a1, a2, a3, a4] = B.unpack y
                                     in return $ IpAddress a1 a2 a3 a4
-      unp (Other Application 1 y) = case (unpackInteger y) of
-                                         Right z -> return $ Counter32 z
-                                         Left e -> error e
-      unp (Other Application 2 y) = case (unpackInteger y) of
-                                         Right z -> return $ Gaude32 z
-                                         Left e -> error e
-      unp (Other Application 3 y) = case (unpackInteger y) of
-                                         Right z -> return $ TimeTicks z
-                                         Left e -> error e
+      unp (Other Application 1 y) = case unpackInteger y of
+                                         Right z -> return $ Counter32 (fI z)
+                                         Left _ -> throw $ ServerException 9
+      unp (Other Application 2 y) = case unpackInteger y of
+                                         Right z -> return $ Gaude32 (fI z)
+                                         Left _ -> throw $ ServerException 9
+      unp (Other Application 3 y) = case unpackInteger y of
+                                         Right z -> return $ TimeTicks (fI z)
+                                         Left _ -> throw $ ServerException 9
       unp (Other Application 4 y) = return $ Opaque y
-      unp (Other Application 6 y) = case (unpackInteger y) of
-                                         Right z -> return $ Counter64 z
-                                         Left e -> error e
-      unp x = return . Simple $ x
+      unp (Other Application 6 y) = case unpackInteger y of
+                                         Right z -> return $ Counter64 (fI z)
+                                         Left _ -> throw $ ServerException 9
+      unp (OID x) = return . OI $ x
+      unp _ = throw $ ServerException 9
 
 instance ASN1Object Community where
     toASN1 (Community x) xs = OctetString x : xs
@@ -708,7 +748,7 @@ instance ASN1Object Flag where
                       (True, True) -> Flag (testBit w 2) AuthPriv
                       (False, False) -> Flag (testBit w 2) NoAuthNoPriv
                       (True, False) -> Flag (testBit w 2) AuthNoPriv
-                      _ -> error "bad flag"
+                      _ -> throw $ ServerException 10
 
 
 instance ASN1Object SecurityModel where
@@ -717,7 +757,7 @@ instance ASN1Object SecurityModel where
         IntVal x <- getNext
         case x of
              3 -> return UserBasedSecurityModel
-             _ -> error "other security model"
+             _ -> throw $ ServerException 7
 
 instance ASN1Object SecurityParameter where
     toASN1 SecurityParameter{..} xs = OctetString (encodeASN1' DER
@@ -733,11 +773,11 @@ instance ASN1Object SecurityParameter where
     fromASN1 asn = flip runParseASN1State asn $ do
         OctetString packed <- getNext
         let r = case decodeASN1' DER packed of
-             Left e -> error $ "cant unpack msgSecurity parameter " ++ show e
+             Left _ -> throw $ ServerException 9
              Right asn' -> parseMsgSecurityParameter asn'
         case r of
-             Left e -> error $ "cant parse msgSecurity parameter" ++ show e
-             Right r -> return r
+             Left _ -> throw $ ServerException 9
+             Right r' -> return r'
 
 parseMsgSecurityParameter :: [ASN1] -> Either String SecurityParameter
 parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
@@ -759,7 +799,7 @@ toP :: ByteString -> PDU V3
 toP bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
-                 e -> error $ "bad pdu" ++ show e
+                 _ -> throw $ ServerException 9
 
 instance Pack Packet where
     encode s = encodeASN1' DER $ toASN1 s []
@@ -769,7 +809,7 @@ toB :: ByteString -> Packet
 toB bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
-                 _ -> error "bad packet"
+                 _ -> throw $ ServerException 9
                  --}
                  --
 instance Show Coupla where
@@ -836,7 +876,7 @@ bytesOfInt i
   | otherwise  = if testBit (head nints) 7 then nints else 0xff : nints
       where
       uints = bytesOfUInt (abs i)
-      nints = reverse $ plusOne $ reverse $ map complement $ uints
+      nints = reverse $ plusOne $ reverse $ map complement uints
       plusOne []     = [1]
       plusOne (x:xs) = if x == 0xff then 0 : plusOne xs else (x+1) : xs
 
@@ -852,7 +892,7 @@ getIntegerRaw typestr s
     | B.length s == 0 = Left $ typestr ++ ": null encoding"
     | B.length s == 1 = Right $ snd $ intOfBytes s
     | otherwise       =
-        if (v1 == 0xff && testBit v2 7) || (v1 == 0x0 && (not $ testBit v2 7))
+        if (v1 == 0xff && testBit v2 7) || (v1 == 0x0 && not (testBit v2 7))
             then Left $ typestr ++ ": not shortest encoding"
             else Right $ snd $ intOfBytes s
     where
@@ -876,6 +916,7 @@ uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral 
 
 ------------------------------------------------------------------------------------------------------
 
+cleanPass :: ByteString
 cleanPass = B.pack $ replicate 12 0x00
  
 data PrivType = DES | AES deriving (Show, Eq)
@@ -883,11 +924,11 @@ data AuthType = MD5 | SHA deriving (Show, Eq)
 type Key = ByteString
 type Password = ByteString
 
-hash :: AuthType -> (ByteString -> ByteString)
+hash :: AuthType -> ByteString -> ByteString
 hash MD5 = Md5.hash
 hash SHA = Sha.hash
 
-hashlazy :: AuthType -> (BL.ByteString -> ByteString)
+hashlazy :: AuthType -> BL.ByteString -> ByteString
 hashlazy MD5 = Md5.hashlazy
 hashlazy SHA = Sha.hashlazy
 
@@ -907,28 +948,33 @@ passwordToKey at pass eid =
 
 -----------------------------------------------------------------------------------------------------
 
-type EngineBootId = Word32
+type EngineBootId = Int32
 type PrivacyParameter = ByteString
 type EngineId = ByteString
+type Salt = ByteString
+type Encrypted = ByteString
+type Raw = ByteString
+type Rand32 = Int32
+type Rand64 = Int64
 
-desEncrypt :: Key -> EngineBootId -> Word32 -> ByteString -> (ByteString, ByteString)
+desEncrypt :: Key -> EngineBootId -> Rand32 -> Raw -> (Encrypted, Salt)
 desEncrypt privKey engineBoot localInt dataToEncrypt = 
     let desKey = B.take 8 privKey
         preIV = B.drop 8 $ B.take 16 privKey
         salt = toSalt engineBoot localInt
-        ivR = B.pack $ map (uncurry xor) $ zip (B.unpack preIV) (B.unpack salt)
+        ivR = B.pack $ zipWith xor (B.unpack preIV) (B.unpack salt)
         Just iv = Priv.makeIV ivR
         Right key = Priv.makeKey desKey 
         des = Priv.cipherInit key :: Priv.DES
-        tailLen = (8 - B.length(dataToEncrypt) `rem` 8) `rem` 8
+        tailLen = (8 - B.length dataToEncrypt `rem` 8) `rem` 8
         tailB = B.replicate tailLen 0x00
     in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
 
-type EngineTime = Word32
+type EngineTime = Int32
 
-aesEncrypt :: Key -> EngineBootId -> EngineTime -> Word64 -> ByteString -> (ByteString, ByteString)
+aesEncrypt :: Key -> EngineBootId -> EngineTime -> Rand64 -> Raw -> (Encrypted, Salt)
 aesEncrypt privKey engineBoot engineTime rcounter dataToEncrypt =
-    let aesKey = B.take 16 $ privKey
+    let aesKey = B.take 16 privKey
         salt = wToBs rcounter
         Just iv = Priv.makeIV $ toSalt engineBoot engineTime <> salt
         Right key = Priv.makeKey aesKey
@@ -936,7 +982,7 @@ aesEncrypt privKey engineBoot engineTime rcounter dataToEncrypt =
     in (Priv.cfbEncrypt aes iv dataToEncrypt, salt)
 
 
-wToBs :: Word64 -> ByteString
+wToBs :: Int64 -> ByteString
 wToBs x = B.pack
   [ fromIntegral $ x `shiftR` 56 .&. 0xff
   , fromIntegral $ x `shiftR` 48 .&. 0xff
@@ -948,7 +994,7 @@ wToBs x = B.pack
   , fromIntegral $ x `shiftR` 0 .&. 0xff
   ]
 
-toSalt :: Word32 -> Word32 -> ByteString
+toSalt :: Int32 -> Int32 -> ByteString
 toSalt x y = B.pack
   [ fromIntegral $ x `shiftR` 24 .&. 0xff 
   , fromIntegral $ x `shiftR` 16 .&. 0xff
@@ -960,20 +1006,20 @@ toSalt x y = B.pack
   , fromIntegral $ y `shiftR`  0 .&. 0xff
   ]
 
-desDecrypt :: Key -> PrivacyParameter -> ByteString -> ByteString
+desDecrypt :: Key -> Salt -> Encrypted -> Raw
 desDecrypt privKey privParameters dataToDecrypt =
     let desKey = B.take 8 privKey
         preIV = B.drop 8 $ B.take 16 privKey
         salt = privParameters
-        ivR = map (uncurry xor) $ zip (B.unpack preIV) (B.unpack salt)
+        ivR = zipWith xor (B.unpack preIV) (B.unpack salt)
         Just iv = Priv.makeIV (B.pack ivR)
         Right key = Priv.makeKey desKey
         des = Priv.cipherInit key :: Priv.DES
     in stripBS $ Priv.cbcDecrypt des iv dataToDecrypt
 
-aesDecrypt :: Key -> PrivacyParameter -> EngineBootId -> EngineTime -> ByteString -> ByteString
+aesDecrypt :: Key -> Salt -> EngineBootId -> EngineTime -> Encrypted -> Raw
 aesDecrypt privKey privParameters engineBoot engineTime dataToDecrypt =
-    let aesKey = B.take 16 $ privKey
+    let aesKey = B.take 16 privKey
         salt = privParameters
         ivR = toSalt engineBoot engineTime <> salt
         Just iv = Priv.makeIV ivR
@@ -987,7 +1033,7 @@ stripBS bs =
         l1 = fromIntegral $ B.head bs'
     in if testBit l1 7
         then case clearBit l1 7 of
-                  0   -> undefined
+                  0   -> throw $ ServerException 12
                   len -> 
                     let size = uintbs (B.take len (B.drop 1 bs'))
                     in B.take (size + len + 2) bs
