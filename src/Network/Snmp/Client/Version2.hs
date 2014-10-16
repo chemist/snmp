@@ -13,11 +13,10 @@ import Control.Concurrent (threadDelay)
 import Control.Exception
 import Control.Monad (when)
 import Data.Monoid ((<>), mconcat, mempty)
-import Debug.Trace
 
-import Network.Protocol.Snmp 
+import Network.Protocol.Snmp hiding (rid)
 import Network.Snmp.Client.Internal
-import Network.Snmp.Client.Types
+import Network.Snmp.Client.Types hiding (timeout, community, hostname, port)
 
 v2 :: Packet
 v2 = initial Version2
@@ -32,12 +31,13 @@ returnResult2 socket timeout = do
          Left _ -> throwIO TimeoutException            
 
 setRCS :: Community -> OIDS -> Packet -> Packet
-setRCS c o = setCommunityP c . setSuite (Suite $ map (\x -> Coupla x Zero) o)
+setRCS c o = setCommunityP c . setSuite (Suite $ map (`Coupla` Zero) o)
 
 clientV2 :: Hostname -> Port -> Int -> Community -> IO Client
 clientV2 hostname port timeout community = do
-    socket <- trace "open socket" $ makeSocket hostname port 
-    ref <- trace "init rid" $ newIORef 0
+    socket <- makeSocket hostname port 
+    uniqInteger <- uniqID
+    ref <- newIORef uniqInteger
     let 
         req oids = setRCS community oids v2
         get' oids = withSocketsDo $ do
@@ -64,6 +64,7 @@ clientV2 hostname port timeout community = do
                      (Suite [Coupla _ NoSuchInstance], Suite [Coupla nextOid _]) -> walk' nextOid base next
                      (Suite [Coupla _ EndOfMibView], _) -> return accumulator
                      (_, Suite [Coupla nextOid _]) -> walk' nextOid base first
+                     (_, _) -> throwIO $ ServerException 5
             | otherwise = do
                 nextData <- getnext' [oids]
                 let Suite [Coupla next v] = nextData
@@ -87,13 +88,13 @@ clientV2 hostname port timeout community = do
             sendAll socket $ encode $ setRequest (SetRequest rid 0 0) . setCommunityP community . setSuite oids $ v2
             returnResult2 socket timeout
 
-    return $ Client 
+    return Client 
         { get = get'
         , bulkget = bulkget'
         , getnext = getnext'
         , walk = \oids -> mconcat <$> mapM (\oi -> walk' oi oi mempty) oids
         , bulkwalk = \oids -> mconcat <$> mapM (\oi -> bulkwalk' oi oi mempty) oids
         , set = set' 
-        , close = trace "close socket" $ NS.close socket
+        , close = NS.close socket
         } 
 

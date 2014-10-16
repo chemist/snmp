@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE RecordWildCards #-}
-module Network.Snmp.Client 
+module Network.Snmp.Client (
 -- * types
-( Client
+  Client
 , Port
 , Hostname
 , Login
@@ -15,7 +15,7 @@ module Network.Snmp.Client
 , Suite(..)
 , PrivAuth(..)
 , AuthType(..)
-, Value(String, Integer, IpAddress, Counter32, Gaude32, TimeTicks, Opaque, Counter64, ZeroDotZero, Zero)
+, Value(String, Integer, IpAddress, Counter32, Gaude32, TimeTicks, Opaque, Counter64, ZeroDotZero, Zero, OI)
 -- * client 
 , client
 -- ** client methods
@@ -28,7 +28,6 @@ module Network.Snmp.Client
 , close
 -- * usefull functions
 , oidFromBS
-, defConfig
 )
 where
 
