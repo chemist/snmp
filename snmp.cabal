@@ -20,7 +20,7 @@ library
   exposed-modules: Network.Protocol.Snmp, Network.Snmp.Client, Network.Snmp.Example
   other-modules: Network.Snmp.Client.Internal, Network.Snmp.Client.Types, Network.Snmp.Client.Version2, Network.Snmp.Client.Version3     
   -- other-extensions:    
-  build-depends:       base >=4.7 && <4.8, 
+  build-depends:       base >=4.6 && <4.8, 
                        asn1-encoding, 
                        asn1-types, 
                        asn1-parse, 
