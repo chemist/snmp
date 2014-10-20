@@ -1,6 +1,9 @@
 snmp
 ====
 
+[![Build Status](https://travis-ci.org/chemist/snmp.svg?branch=master)](https://travis-ci.org/chemist/snmp)
+[![Gitter chat](https://badges.gitter.im/chemist/snmp.png)](https://gitter.im/chemist/snmp)
+
 This is library for work with SNMPv2, SNMPv3.
 
 It can be usefull if you need write agent or server.
