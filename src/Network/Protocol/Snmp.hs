@@ -4,6 +4,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
 module Network.Protocol.Snmp (
 -- * snmp types
@@ -113,7 +114,11 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8, Word32, Word64)
+#if MIN_VERSION_base(4,7,0)
 import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
+#else
+import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, xor, clearBit)
+#endif
 import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
 import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1, getNextContainer, onNextContainer, getMany)
 import Data.ASN1.BinaryEncoding (DER(..))
@@ -171,6 +176,12 @@ import Data.Int
 
 fI :: (Num b, Integral a) => a -> b
 fI = fromIntegral
+
+#if MIN_VERSION_base(4,7,0)
+#else
+zeroBits :: a
+zeroBits = clearBit (bit 0) 0
+#endif
 
 -- | Phantom type for version 2 (Header V2, PDU V2)
 data V2
