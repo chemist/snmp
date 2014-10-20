@@ -179,7 +179,7 @@ fI = fromIntegral
 
 #if MIN_VERSION_base(4,7,0)
 #else
-zeroBits :: Bits a =>  a
+zeroBits :: (Num a, Bits a) =>  a
 zeroBits = clearBit (bit 0) 0
   where
   bit :: (Bits a, Num a) => Int -> a
