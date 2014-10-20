@@ -29,7 +29,8 @@ conf3 = (initial Version3) { hostname = "salt"
                            , authType = SHA
                            , privType = AES
                            , sequrityLevel = AuthPriv
-                           } > -- do io 
+                           } 
+-- do io 
 client3 :: IO ()
 client3 = bracket (client conf3)
                   close
