@@ -183,7 +183,7 @@ zeroBits :: a
 zeroBits = clearBit (bit 0) 0
   where
   bit :: (Bits a, Num a) => Int -> a
-  \i -> 1 `shiftL` i
+  bit i = 1 `shiftL` i
 #endif
 
 -- | Phantom type for version 2 (Header V2, PDU V2)
