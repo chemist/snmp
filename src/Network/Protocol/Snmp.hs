@@ -117,7 +117,7 @@ import Data.Word (Word8, Word32, Word64)
 #if MIN_VERSION_base(4,7,0)
 import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
 #else
-import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, xor, clearBit)
+import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, xor, clearBit, Bits)
 #endif
 import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
 import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1, getNextContainer, onNextContainer, getMany)
