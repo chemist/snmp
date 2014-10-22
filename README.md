@@ -17,7 +17,7 @@ import Control.Exception (bracket, try)
 import Network.Snmp.Client
 import Network.Protocol.Snmp
 
--- For SNMPv3
+-- For SNMPv2
 conf2 :: Config
 conf2 = (initial Version2) { hostname = "salt" 
                            , community = Community "helloall"
