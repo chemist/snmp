@@ -73,9 +73,12 @@ init' :: ST -> IO (ByteString, Int32, Int32)
 init' st = withSocketsDo $ do
     rid <- predCounter (ref' st)
     sendAll (socket' st) $ encode $ packet' rid
-    resp <- decode <$> recv (socket' st) 1500 :: IO Packet
-    atomicWriteIORef (engine' st) $ Just (getEngineIdP resp, getEngineBootsP resp, getEngineTimeP resp) 
-    return (getEngineIdP resp, getEngineBootsP resp, getEngineTimeP resp)
+    result <- race (threadDelay (timeout' st)) (decode <$> recv (socket' st) 1500 :: IO Packet)
+    case result of
+         Left _ -> throwIO TimeoutException
+         Right resp -> do
+            atomicWriteIORef (engine' st) $ Just (getEngineIdP resp, getEngineBootsP resp, getEngineTimeP resp) 
+            return (getEngineIdP resp, getEngineBootsP resp, getEngineTimeP resp)
     where
       packet' x = ( setIDP (ID x)
                   . setMaxSizeP (MaxSize 1500)
