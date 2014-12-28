@@ -9,9 +9,10 @@ module Network.Snmp.Client.Version3
 where
 
 import Data.ByteString (ByteString)
+import Data.ByteString.Lazy (toStrict, fromStrict)
 import Network.Socket hiding (recv, socket, close)
 import qualified Network.Socket as NS
-import Network.Socket.ByteString (recv, sendAll)
+import Network.Socket.ByteString.Lazy (recv, sendAll)
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async
 import Data.IORef (newIORef, IORef, readIORef, atomicWriteIORef)
@@ -22,6 +23,7 @@ import Data.Monoid ((<>), mempty, mconcat)
 import Data.Int
 import Control.Exception 
 import System.Random (randomIO)
+import Data.Binary 
 
 import Network.Protocol.Snmp
 import Network.Snmp.Client.Types
@@ -232,13 +234,13 @@ encryptPacket st key packet'
   | privType' st == DES = do
       s <- succCounter (salt32 st)
       let eib = getEngineBootsP packet'
-          (encrypted, salt) = desEncrypt key eib s (encode $ (getPDU packet' :: PDU V3))
+          (encrypted, salt) = desEncrypt key eib s (toStrict $ encode $ (getPDU packet' :: PDU V3))
       return $ setPrivParametersP salt . setPDU (CryptedPDU encrypted) $ packet'
   | privType' st == AES = do
       s <- succCounter (salt64 st)
       let eib = getEngineBootsP packet'
           t = getEngineTimeP packet'
-          (encrypted, salt) = aesEncrypt key eib t s (encode $ (getPDU packet' :: PDU V3))
+          (encrypted, salt) = aesEncrypt key eib t s (toStrict $ encode $ (getPDU packet' :: PDU V3))
       return $ setPrivParametersP salt . setPDU (CryptedPDU encrypted) $ packet'
   | otherwise = throwIO $ ServerException 5
 
@@ -248,7 +250,7 @@ decryptPacket st key packet'
       let pdu = getPDU packet' :: PDU V3
           salt = getPrivParametersP packet'
       in case pdu of
-              CryptedPDU x -> setPDU (decode (desDecrypt key salt x) :: PDU V3) packet'
+              CryptedPDU x -> setPDU (decode (fromStrict $ desDecrypt key salt x) :: PDU V3) packet'
               _ -> packet'
   | privType' st == AES =
       let pdu = getPDU packet' :: PDU V3
@@ -256,7 +258,7 @@ decryptPacket st key packet'
           eib = getEngineBootsP packet'
           t = getEngineTimeP packet'
       in case pdu of
-              CryptedPDU x -> setPDU (decode (aesDecrypt key salt eib t x) :: PDU V3) packet'
+              CryptedPDU x -> setPDU (decode (fromStrict $ aesDecrypt key salt eib t x) :: PDU V3) packet'
               _ -> packet'
   | otherwise = throw $ ServerException 5
 

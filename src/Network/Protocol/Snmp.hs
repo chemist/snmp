@@ -44,8 +44,6 @@ module Network.Protocol.Snmp (
 -- *** PDU snmpV3
 , ContextEngineID(..)
 , ContextName(..)
--- * pack, unpack Packet
-, Pack(..)
 -- * some classes and helpers 
 -- *** universal, for work with both versions
 , HasItem(..)
@@ -113,7 +111,6 @@ where
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
-import Data.Word (Word8, Word32, Word64)
 #if MIN_VERSION_base(4,7,0)
 import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
 #else
@@ -134,6 +131,9 @@ import qualified Crypto.Cipher.Types as Priv
 import qualified Crypto.Cipher.DES as Priv
 import qualified Crypto.Cipher.AES as Priv
 import Data.Int
+import Data.Binary
+import Data.Binary.Get
+import Data.Binary.Put
 
 -- $example
 --
@@ -309,11 +309,6 @@ newtype ContextName = ContextName ByteString deriving (Show, Eq)
 data ClientException = TimeoutException 
                      | ServerException Integer
                      deriving (Typeable, Eq)
-
--- | class for make binary packet from [ASN1] 
-class Pack a where
-    encode :: a -> ByteString
-    decode :: ByteString -> a
 
 -- | some universal getters, setters
 class HasItem a where
@@ -805,9 +800,11 @@ parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
      End Sequence <- getNext
      return $ SecurityParameter msgAuthoritiveEngineId (fromIntegral msgAuthoritiveEngineBoots) (fromIntegral msgAuthoritiveEngineTime) msgUserName msgAuthenticationParameters msgPrivacyParameters 
 
-instance Pack (PDU V3) where
-    encode s = encodeASN1' DER $ toASN1 s []
-    decode = toP
+instance Binary (PDU V3) where
+    put = putByteString . encodeASN1' DER . flip toASN1 [] 
+    get = toP . BL.toStrict <$> getRemainingLazyByteString
+--    encode s = encodeASN1' DER $ toASN1 s []
+--    decode = toP
 
 toP :: ByteString -> PDU V3
 toP bs = let a = fromASN1 <$> decodeASN1' DER bs
@@ -815,9 +812,10 @@ toP bs = let a = fromASN1 <$> decodeASN1' DER bs
                  Right (Right (r, _)) -> r
                  _ -> throw $ ServerException 9
 
-instance Pack Packet where
-    encode s = encodeASN1' DER $ toASN1 s []
-    decode = toB 
+instance Binary Packet where
+    put = putByteString . encodeASN1' DER . flip toASN1 []
+--    encode s = encodeASN1' DER $ toASN1 s []
+    get = toB . BL.toStrict <$> getRemainingLazyByteString
 
 toB :: ByteString -> Packet 
 toB bs = let a = fromASN1 <$> decodeASN1' DER bs
@@ -949,7 +947,7 @@ hashlazy SHA = Sha.hashlazy
 -- | (only V3) sign Packet 
 signPacket :: AuthType -> Key -> Packet -> Packet 
 signPacket at key packet = 
-    let packetAsBin = encode packet
+    let packetAsBin = BL.toStrict $ encode packet
         sign = B.take 12 $ HMAC.hmac (hash at) 64 key packetAsBin 
     in setAuthenticationParametersP sign packet
 

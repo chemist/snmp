@@ -5,7 +5,7 @@ where
 
 import Network.Socket hiding (recv, socket, close)
 import qualified Network.Socket as NS
-import Network.Socket.ByteString (recv, sendAll)
+import Network.Socket.ByteString.Lazy (recv, sendAll)
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async
 import Data.IORef (newIORef)
@@ -13,6 +13,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception
 import Control.Monad (when)
 import Data.Monoid ((<>), mconcat, mempty)
+import Data.Binary hiding (get)
 
 import Network.Protocol.Snmp hiding (rid)
 import Network.Snmp.Client.Internal
