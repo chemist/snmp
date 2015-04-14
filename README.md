@@ -6,7 +6,7 @@ snmp
 
 This is library for work with SNMPv2, SNMPv3.
 
-It can be usefull if you need write agent or server.
+It can be useful if you need write agent or server.
 
 Usage example:
 

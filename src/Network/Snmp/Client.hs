@@ -26,7 +26,7 @@ module Network.Snmp.Client (
 , bulkwalk
 , set
 , close
--- * usefull functions
+-- * useful functions
 , oidFromBS
 )
 where
