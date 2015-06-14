@@ -15,7 +15,7 @@ module Network.Snmp.Client (
 , Suite(..)
 , PrivAuth(..)
 , AuthType(..)
-, Value(String, Integer, IpAddress, Counter32, Gaude32, TimeTicks, Opaque, Counter64, ZeroDotZero, Zero, OI)
+, Value(String, Integer, IpAddress, Counter32, Gauge32, TimeTicks, Opaque, Counter64, ZeroDotZero, Zero, OI)
 -- * client 
 , client
 -- ** client methods

@@ -231,7 +231,7 @@ data Value = OI OID
            | String ByteString
            | IpAddress Word8 Word8 Word8 Word8
            | Counter32 Word32
-           | Gaude32 Word32
+           | Gauge32 Word32
            | TimeTicks Word32
            | Opaque ByteString
            | Counter64 Word64
@@ -683,7 +683,7 @@ instance ASN1Object Value where
     toASN1 (String x) xs = OctetString x : xs
     toASN1 (IpAddress a1 a2 a3 a4) xs = Other Application 0 (B.pack [a1, a2, a3, a4]) : xs
     toASN1 (Counter32 x) xs = Other Application 1 (packInteger (fI x)) : xs
-    toASN1 (Gaude32 x) xs = Other Application 2 (packInteger (fI x)) : xs
+    toASN1 (Gauge32 x) xs = Other Application 2 (packInteger (fI x)) : xs
     toASN1 (TimeTicks x) xs = Other Application 3 (packInteger (fI x)) : xs
     toASN1 (Opaque x) xs = Other Application 4 x : xs
     toASN1 (Counter64 x) xs = Other Application 6 (packInteger (fI x)) : xs
@@ -702,7 +702,7 @@ instance ASN1Object Value where
                                          Right z -> return $ Counter32 (fI z)
                                          Left _ -> throw $ ServerException 9
       unp (Other Application 2 y) = case unpackInteger y of
-                                         Right z -> return $ Gaude32 (fI z)
+                                         Right z -> return $ Gauge32 (fI z)
                                          Left _ -> throw $ ServerException 9
       unp (Other Application 3 y) = case unpackInteger y of
                                          Right z -> return $ TimeTicks (fI z)
