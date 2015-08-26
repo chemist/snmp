@@ -49,10 +49,10 @@ client ConfigV2{..} = clientV2 hostname
 client ConfigV3{..} = clientV3 hostname       
                                port           
                                timeout        
-                               sequrityName   
+                               securityName   
                                authPass       
                                privPass       
-                               sequrityLevel  
+                               securityLevel  
                                authType       
                                privType      
 

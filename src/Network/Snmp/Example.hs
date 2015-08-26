@@ -48,12 +48,12 @@ import Network.Protocol.Snmp
 > -- For SNMPv3
 > conf3 :: Config
 > conf3 = (initial Version3) { hostname = "salt" 
->                            , sequrityName = "aes"
+>                            , securityName = "aes"
 >                            , authPass = "helloallhello"
 >                            , privPass = "helloallhello"
 >                            , authType = SHA
 >                            , privType = AES
->                            , sequrityLevel = AuthPriv
+>                            , securityLevel = AuthPriv
 >                            } 
 > 
 -}
@@ -69,12 +69,12 @@ conf2 = (initial Version2) { hostname = "salt"
 -- For SNMPv3
 conf3 :: Config
 conf3 = (initial Version3) { hostname = "salt" 
-                           , sequrityName = "aes"
+                           , securityName = "aes"
                            , authPass = "helloallhello"
                            , privPass = "helloallhello"
                            , authType = SHA
                            , privType = AES
-                           , sequrityLevel = AuthPriv
+                           , securityLevel = AuthPriv
                            } 
 
 {- $send

@@ -25,10 +25,10 @@ data Config = ConfigV1
   { hostname :: Hostname
   , port :: Port
   , timeout :: Int
-  , sequrityName :: Login
+  , securityName :: Login
   , authPass :: Password
   , privPass :: Password
-  , sequrityLevel :: PrivAuth
+  , securityLevel :: PrivAuth
   , context :: ByteString
   , authType :: AuthType
   , privType :: PrivType
