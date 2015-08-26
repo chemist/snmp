@@ -35,7 +35,7 @@ v3 = initial Version3
 data ST = ST
   { authCache' :: IORef (Maybe ByteString)
   , privCache' :: IORef (Maybe ByteString)
-  , engine' :: IORef (Maybe (ByteString, Int32, Int32))
+  , engine' :: IORef (Maybe (ByteString, ContextEngineID, Int32, Int32))
   , ref' :: IORef Int32
   , salt32 :: IORef Int32
   , salt64 :: IORef Int64
@@ -71,7 +71,7 @@ clientV3 hostname port timeout sequrityName authPass privPass securityLevel auth
       }
 
 
-init' :: ST -> IO (ByteString, Int32, Int32)
+init' :: ST -> IO (ByteString, ContextEngineID, Int32, Int32)
 init' st = withSocketsDo $ do
     rid <- predCounter (ref' st)
     sendAll (socket' st) $ encode $ packet' rid
@@ -79,8 +79,9 @@ init' st = withSocketsDo $ do
     case result of
          Left _ -> throwIO TimeoutException
          Right resp -> do
-            atomicWriteIORef (engine' st) $ Just (getEngineIdP resp, getEngineBootsP resp, getEngineTimeP resp) 
-            return (getEngineIdP resp, getEngineBootsP resp, getEngineTimeP resp)
+             let pdu = (getPDU resp :: PDU V3)
+             atomicWriteIORef (engine' st) $ Just (getEngineIdP resp, getContextEngineID pdu, getEngineBootsP resp, getEngineTimeP resp) 
+             return (getEngineIdP resp, getContextEngineID pdu, getEngineBootsP resp, getEngineTimeP resp)
     where
       packet' x = ( setIDP (ID x)
                   . setMaxSizeP (MaxSize 1500)
@@ -163,7 +164,7 @@ packet :: ST -> Suite -> (RequestId -> ErrorStatus -> ErrorIndex -> Request) -> 
 packet st suite r = do
     rid <- predCounter (ref' st)
     eid' <- readIORef (engine' st)
-    (eid, boots, time) <- case eid' of
+    (eid, ceid, boots, time) <- case eid' of
                                 Just x -> return x
                                 Nothing -> init' st
     let wrapBulk (GetBulk rid' x _) = GetBulk rid' x 10
@@ -172,6 +173,7 @@ packet st suite r = do
                . (setPrivAuthP (securityLevel' st)) 
                . (setUserNameP (login' st))  
                . (setEngineIdP eid)
+               . (setContextEngineIDPacket ceid)
                . (setEngineBootsP boots)
                . (setEngineTimeP time)
                . (setAuthenticationParametersP cleanPass)  
@@ -180,6 +182,12 @@ packet st suite r = do
                . (setSuite  suite)
                ) v3
     return full
+
+setContextEngineIDPacket :: ContextEngineID -> Packet -> Packet
+setContextEngineIDPacket ceid packet =
+    let pdu = (getPDU packet :: PDU V3)
+        newpdu = setContextEngineID ceid pdu
+    in setPDU newpdu packet
 
 
 sendPacket :: ST -> Packet -> IO ()
