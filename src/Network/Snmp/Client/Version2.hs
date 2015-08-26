@@ -1,5 +1,6 @@
 module Network.Snmp.Client.Version2
-( clientV2
+( clientV1
+, clientV2
 )
 where
 
@@ -22,6 +23,9 @@ import Network.Snmp.Client.Types hiding (timeout, community, hostname, port)
 v2 :: Packet
 v2 = initial Version2
 
+v1 :: Packet
+v1 = initial Version1
+
 returnResult2 :: NS.Socket -> Int -> IO Suite
 returnResult2 socket timeout = do
     result <- race (threadDelay timeout) (decode <$> recv socket 1500 :: IO Packet)
@@ -34,17 +38,30 @@ returnResult2 socket timeout = do
 setRCS :: Community -> OIDS -> Packet -> Packet
 setRCS c o = setCommunityP c . setSuite (Suite $ map (`Coupla` Zero) o)
 
+clientV1 :: Hostname -> Port -> Int -> Community -> IO Client
+clientV1 = clientV12 v1
+
 clientV2 :: Hostname -> Port -> Int -> Community -> IO Client
-clientV2 hostname port timeout community = do
+clientV2 = clientV12 v2
+
+clientV12 :: Packet -> Hostname -> Port -> Int -> Community -> IO Client
+clientV12 packet hostname port timeout community = do
     socket <- makeSocket hostname port 
     uniqInteger <- uniqID
     ref <- newIORef uniqInteger
     let 
-        req oids = setRCS community oids v2
+        req oids = setRCS community oids packet
         get' oids = withSocketsDo $ do
+            let packet' = req oids
+                version = getVersion packet'
             rid <- succCounter ref
-            sendAll socket $ encode $ setRequest (GetRequest rid 0 0) (req oids) 
-            returnResult2 socket timeout
+            sendAll socket $ encode $ setRequest (GetRequest rid 0 0) packet'
+            case version of
+                 Version2 -> returnResult2 socket timeout
+                 Version1 -> catch (returnResult2 socket timeout) (fixErrorV1Get oids)
+                 Version3 -> error "imposible"
+        fixErrorV1Get oids (ServerException 2) = return $ Suite $ map (`Coupla` NoSuchObject) oids
+        fixErrorV1Get _ e = throwIO e
 
         bulkget' oids = withSocketsDo $ do
             rid <- succCounter ref
@@ -52,9 +69,16 @@ clientV2 hostname port timeout community = do
             returnResult2 socket timeout
 
         getnext' oids = withSocketsDo $ do
+            let packet' = req oids
+                version = getVersion packet'
             rid <- succCounter ref
-            sendAll socket $ encode $ setRequest (GetNextRequest rid 0 0) (req oids)
-            returnResult2 socket timeout
+            sendAll socket $ encode $ setRequest (GetNextRequest rid 0 0) packet'
+            case version of
+                 Version2 -> returnResult2 socket timeout
+                 Version1 -> catch (returnResult2 socket timeout) (fixErrorV1GetNext oids)
+                 Version3 -> error "imposible"
+        fixErrorV1GetNext oids (ServerException 2) = return $ Suite $ map (`Coupla` EndOfMibView) oids
+        fixErrorV1GetNext _ e = throwIO e
 
         walk' oids base accumulator 
             | oids == base = do
@@ -86,7 +110,7 @@ clientV2 hostname port timeout community = do
                     (True, _) -> return $ accumulator <> filtered first
         set' oids = withSocketsDo $ do
             rid <- succCounter ref
-            sendAll socket $ encode $ setRequest (SetRequest rid 0 0) . setCommunityP community . setSuite oids $ v2
+            sendAll socket $ encode $ setRequest (SetRequest rid 0 0) . setCommunityP community . setSuite oids $ packet
             returnResult2 socket timeout
 
     return Client 

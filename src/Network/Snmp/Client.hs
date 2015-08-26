@@ -38,16 +38,21 @@ import Network.Snmp.Client.Version2
 import Network.Snmp.Client.Version3
 
 client :: Config -> IO Client
-client conf@ConfigV2{..} = clientV2 hostname 
-                                    port 
-                                    timeout 
-                                    community
-client conf@ConfigV3{..}  = clientV3 hostname       
-                                     port           
-                                     timeout        
-                                     sequrityName   
-                                     authPass       
-                                     privPass       
-                                     sequrityLevel  
-                                     authType       
-                                     privType      
+client ConfigV1{..} = clientV1 hostname 
+                               port 
+                               timeout 
+                               community
+client ConfigV2{..} = clientV2 hostname 
+                               port 
+                               timeout 
+                               community
+client ConfigV3{..} = clientV3 hostname       
+                               port           
+                               timeout        
+                               sequrityName   
+                               authPass       
+                               privPass       
+                               sequrityLevel  
+                               authType       
+                               privType      
+

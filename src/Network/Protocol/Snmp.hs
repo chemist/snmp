@@ -186,6 +186,8 @@ zeroBits = clearBit (bit 0) 0
   bit i = 1 `shiftL` i
 #endif
 
+-- | Phantom type for version 1 (Header V2, PDU V2)
+data V1
 -- | Phantom type for version 2 (Header V2, PDU V2)
 data V2
 -- | Phantom type for version 3 (Header V3, PDU V3)
@@ -359,7 +361,7 @@ class Construct a where
 instance Construct (Version -> Packet) where
     initial Version3 = V3Packet Version3 initial initial
     initial Version2 = V2Packet Version2 initial initial
-    initial Version1 = error "not inplemented"
+    initial Version1 = V2Packet Version1 initial initial
 
 instance Construct (Header V3) where
     initial = V3Header (ID 0) (MaxSize 65007) (Flag False NoAuthNoPriv) UserBasedSecurityModel initial
@@ -662,15 +664,16 @@ instance ASN1Object Version where
              _ -> throw $ ServerException 10
 
 instance ASN1Object Packet where
+    toASN1 (V2Packet Version1 header body) _ = Start Sequence : toASN1 Version1 (toASN1 header (toASN1 body [End Sequence]))
     toASN1 (V2Packet Version2 header body) _ = Start Sequence : toASN1 Version2 (toASN1 header (toASN1 body [End Sequence]))
     toASN1 (V3Packet Version3 header body) _ = Start Sequence : toASN1 Version3 (toASN1 header (toASN1 body [End Sequence]))
     toASN1 _ _ = throw $ ServerException 10
     fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
         v <- getObject
         case v of
+             Version1 -> V2Packet Version1 <$> getObject <*> getObject
              Version2 -> V2Packet Version2 <$> getObject <*> getObject
              Version3 -> V3Packet Version3 <$> getObject <*> getObject
-             _ -> throw $ ServerException 10
 
 instance ASN1Object Value where
     toASN1 NoSuchObject xs = Other Context 0 "" : xs

@@ -11,7 +11,12 @@ type Port = String
 type Login = ByteString
 
 
-data Config = ConfigV2
+data Config = ConfigV1 
+  { hostname :: Hostname
+  , port :: Port
+  , timeout :: Int
+  , community :: Community
+  }         | ConfigV2
   { hostname :: Hostname
   , port :: Port
   , timeout :: Int
@@ -44,7 +49,7 @@ data Client = Client
   }
 
 instance Construct (Version -> Config) where
-    initial Version1 = ConfigV2 "localhost" "161" (sec 5) (Community "public") 
+    initial Version1 = ConfigV1 "localhost" "161" (sec 5) (Community "public") 
     initial Version2 = ConfigV2 "localhost" "161" (sec 5) (Community "public")
     initial Version3 = ConfigV3 "localhost" "161" (sec 5) "guest" "" "" AuthNoPriv "" MD5 DES
 

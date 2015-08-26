@@ -4,7 +4,7 @@ snmp
 [![Build Status](https://travis-ci.org/chemist/snmp.svg?branch=master)](https://travis-ci.org/chemist/snmp)
 [![Gitter chat](https://badges.gitter.im/chemist/snmp.png)](https://gitter.im/chemist/snmp)
 
-This is library for work with SNMPv2, SNMPv3.
+This is library for work with SNMPv1, SNMPv2, SNMPv3.
 
 It can be useful if you need write agent or server.
 
@@ -17,6 +17,11 @@ import Control.Exception (bracket, try)
 import Network.Snmp.Client
 import Network.Protocol.Snmp
 
+-- For SNMPv1
+conf1 :: Config
+conf1 = (initial Version1) { hostname = "salt" 
+                           , community = Community "helloall"
+                           } 
 -- For SNMPv2
 conf2 :: Config
 conf2 = (initial Version2) { hostname = "salt" 
@@ -41,6 +46,11 @@ client3 = bracket (client conf3)
 
 client2 :: IO ()
 client2 = bracket (client conf2)
+                  close
+                  requests
+
+client1 :: IO ()
+client1 = bracket (client conf1)
                   close
                   requests
 

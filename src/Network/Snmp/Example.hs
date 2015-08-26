@@ -34,7 +34,12 @@ import Network.Protocol.Snmp
 
 {- $config
 > -- First you must create config
-> -- For SNMPv3
+> -- For SNMPv1
+> conf1 :: Config
+> conf1 = (initial Version1) { hostname = "salt" 
+>                            , community = Community "helloall"
+>                            } 
+> -- For SNMPv2
 > conf2 :: Config
 > conf2 = (initial Version2) { hostname = "salt" 
 >                            , community = Community "helloall"
@@ -52,6 +57,10 @@ import Network.Protocol.Snmp
 >                            } 
 > 
 -}
+conf1 :: Config
+conf1 = (initial Version1) { hostname = "salt" 
+                           , community = Community "helloall"
+                           } 
 conf2 :: Config
 conf2 = (initial Version2) { hostname = "salt" 
                            , community = Community "helloall"
@@ -79,6 +88,11 @@ conf3 = (initial Version3) { hostname = "salt"
 > client2 = bracket (client conf2)
 >                   close
 >                   requests
+>
+> client1 :: IO ()
+> client1 = bracket (client conf1)
+>                   close
+>                   requests
 > 
 -}
 client3 :: IO ()
@@ -88,6 +102,11 @@ client3 = bracket (client conf3)
 
 client2 :: IO ()
 client2 = bracket (client conf2)
+                  close
+                  requests
+
+client1 :: IO ()
+client1 = bracket (client conf1)
                   close
                   requests
 
@@ -115,13 +134,14 @@ tabl = [31,1,1,1,1]
 ipAddr = [1,3,6,1,2,1,4,22,1,3,3,192,168,3,1]
 zeroDotZero = [1,3,6,1,2,1,2,2,1,22,20]
 
-oi, sysUptime, memory, sysContact, bad, testOid :: ByteString
+oi, sysUptime, memory, sysContact, bad, testOid, inet :: ByteString
 oi = ".1.3.6.1.2.1.1.9.1.2.1"
 sysUptime = "1.3.6.1.2.1.25.1.1.0"
 memory = "1.3.6.1.2.1.25.2"
 sysContact = "1.3.6.1.2.1.1.4.0"
 bad = "1.4.6.1.2.1.1.4"
 testOid = "1.3.6.1.2.1.25.1.1.0"
+inet = ".1.3.6.1"
 
 {- $request
 > -- Describe requests
@@ -149,7 +169,6 @@ testOid = "1.3.6.1.2.1.25.1.1.0"
 requests :: Client -> IO ()
 requests snmp = do
     print "get request"
-    putStr . show =<< get snmp [oidFromBS testOid]
     putStr . show =<< get snmp [oidFromBS testOid]
     putStr . show =<< get snmp [oidFromBS sysUptime, oidFromBS oi, zeroDotZero]
     print "bulkget request"
