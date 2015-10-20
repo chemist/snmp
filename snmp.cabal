@@ -1,5 +1,5 @@
 name:                snmp
-version:             0.2.1.2
+version:             0.3.0.0
 synopsis:            SNMP protocol implementation.
 description:         SNMP protocol implementation.
 license:             BSD3
