@@ -1,11 +1,11 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE CPP                        #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 module Network.Protocol.Snmp (
 -- * snmp types
   Value(..)
@@ -17,7 +17,7 @@ module Network.Protocol.Snmp (
 , Version(..)
 , Packet
 -- ** header
-, Header 
+, Header
 -- *** header snmpV2
 , Community(..)
 -- *** header snmpV3
@@ -44,7 +44,7 @@ module Network.Protocol.Snmp (
 -- *** PDU snmpV3
 , ContextEngineID(..)
 , ContextName(..)
--- * some classes and helpers 
+-- * some classes and helpers
 -- *** universal, for work with both versions
 , HasItem(..)
 -- *** v2 only, for work with Header V2
@@ -102,42 +102,49 @@ module Network.Protocol.Snmp (
 , aesDecrypt
 , toSalt
 -- * exceptions
-, ClientException(..) 
+, ClientException(..)
 -- * usage example
 -- $example
 )
 where
 
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
+import           Data.ByteString      (ByteString)
+import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as BL
 #if MIN_VERSION_base(4,7,0)
-import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
+import Data.Bits (clearBit, complement, setBit, shiftL, shiftR, testBit, xor,
+                  zeroBits, (.&.), (.|.))
 #else
-import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, xor, clearBit, Bits(..))
+import Data.Bits (Bits (..), clearBit, complement, setBit, shiftL, shiftR,
+                  testBit, xor, (.&.), (.|.))
 #endif
-import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
-import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1, getNextContainer, onNextContainer, getMany)
-import Data.ASN1.BinaryEncoding (DER(..))
-import Data.ASN1.Encoding (encodeASN1', decodeASN1')
-import Control.Applicative ((<$>), (<*>), (*>), (<*))
-import Data.Monoid (Monoid, (<>))
-import Control.Exception (Exception, throw)
-import Data.Typeable (Typeable)
-import qualified Crypto.Hash.MD5 as Md5
-import qualified Crypto.Hash.SHA1 as Sha
-import qualified Crypto.MAC.HMAC as HMAC
-import qualified Crypto.Cipher.Types as Priv
-import qualified Crypto.Cipher.DES as Priv
-import qualified Crypto.Cipher.AES as Priv
-import Data.Int
-import Data.Binary
-import Data.Binary.Get
-import Data.Binary.Put
+import           Control.Applicative      ((*>), (<$>), (<*), (<*>))
+import           Control.Exception        (Exception, throw)
+import qualified Crypto.Cipher.AES        as Priv
+import qualified Crypto.Cipher.DES        as Priv
+import qualified Crypto.Cipher.Types      as Priv
+import qualified Crypto.Hash.MD5          as Md5
+import qualified Crypto.Hash.SHA1         as Sha
+import qualified Crypto.MAC.HMAC          as HMAC
+import           Data.ASN1.BinaryEncoding (DER (..))
+import           Data.ASN1.Encoding       (decodeASN1', encodeASN1')
+import           Data.ASN1.Parse          (ParseASN1, getMany, getNext,
+                                           getNextContainer, getObject,
+                                           onNextContainer, runParseASN1,
+                                           runParseASN1State)
+import           Data.ASN1.Types          (ASN1 (..), ASN1Class (..),
+                                           ASN1ConstructionType (..),
+                                           ASN1Object (..), OID)
+import           Data.Binary
+import           Data.Binary.Get
+import           Data.Binary.Put
+import           Data.Int
+import           Data.Monoid              (Monoid, (<>))
+import           Data.Typeable            (Typeable)
 
 -- $example
 --
--- Here example for snmpV2 
+-- Here example for snmpV2
 --
 -- @
 -- import Network.Protocol.Snmp
@@ -148,16 +155,16 @@ import Data.Binary.Put
 -- -- create new empty packet
 -- v2 :: Packet
 -- v2 = initial Version2
--- 
+--
 -- community = Community "hello"
 --
 -- oi = Coupla [1,3,6,1,2,1,1,4,0] Zero
 --
 -- -- set community, oid
 -- packet :: Community -> Coupla -> Packet
--- packet community oi = 
+-- packet community oi =
 --   setCommunityP community . setSuite (Suite [oi]) $ v2
--- 
+--
 -- -- here must be code for create udp socket
 -- makeSocket :: Hostname -> Port -> IO Socket
 -- makeSocket = undefined
@@ -167,10 +174,10 @@ import Data.Binary.Put
 --    socket <- makeSocket "localhost" "161"
 --    sendAll socket $ encode $ setRequest (GetRequest 1 0 0) packet
 --    result <- decode <$\> recv socket 1500 :: IO Packet
---    print $ getSuite result 
--- 
+--    print $ getSuite result
+--
 -- @
--- 
+--
 
 -----------------------------------------------------------------------------------------------------------------
 
@@ -195,7 +202,7 @@ data V3
 
 -- | Snmp version tag
 data Version = Version1
-             | Version2 
+             | Version2
              | Version3
              deriving (Eq, Show)
 
@@ -206,8 +213,8 @@ data Packet where
   V2Packet :: Version -> Header V2 -> PDU V2 -> Packet
   V3Packet :: Version -> Header V3 -> PDU V3 -> Packet
 
-deriving instance Show Packet 
-deriving instance Eq Packet 
+deriving instance Show Packet
+deriving instance Eq Packet
 
 -- | Snmp header without version tag
 data Header a where
@@ -243,13 +250,13 @@ data Value = OI OID
            | EndOfMibView
            deriving (Show, Eq)
 
--- | Request id 
+-- | Request id
 type RequestId = Int32
 
--- | Error status 
+-- | Error status
 type ErrorStatus = Integer
 
--- | Error index 
+-- | Error index
 type ErrorIndex = Integer
 
 -- | requests
@@ -293,13 +300,13 @@ data Flag = Flag Reportable PrivAuth  deriving (Show, Eq)
 data SecurityModel = UserBasedSecurityModel deriving (Show, Eq)
 
 -- | (snmp3 only) rfc3412, security parameter
-data SecurityParameter = SecurityParameter 
-  { authoritiveEngineId :: ByteString
-  , authoritiveEngineBoots :: Int32
-  , authoritiveEngineTime :: Int32
-  , userName :: ByteString
+data SecurityParameter = SecurityParameter
+  { authoritiveEngineId      :: ByteString
+  , authoritiveEngineBoots   :: Int32
+  , authoritiveEngineTime    :: Int32
+  , userName                 :: ByteString
   , authenticationParameters :: ByteString
-  , privacyParameters :: ByteString
+  , privacyParameters        :: ByteString
   }
   deriving (Eq)
 
@@ -308,7 +315,7 @@ newtype ContextEngineID = ContextEngineID ByteString deriving (Show, Eq)
 newtype ContextName = ContextName ByteString deriving (Show, Eq)
 
 -- | some exception
-data ClientException = TimeoutException 
+data ClientException = TimeoutException
                      | ServerException Integer
                      deriving (Typeable, Eq)
 
@@ -437,30 +444,30 @@ instance HasV3 V3 where
     setPrivacyParameters        i (V3Header a b c d f) = V3Header a b c d (f { privacyParameters = i })
     setContextEngineID i (ScopedPDU _ b c) = ScopedPDU i b c
     setContextEngineID _ _ = undefined
-    setContextName i (ScopedPDU a _ b) = ScopedPDU a i b 
+    setContextName i (ScopedPDU a _ b) = ScopedPDU a i b
     setContextName _ _ = undefined
 
 ----------------------------------------------------------------------------------------
-setIDP :: ID -> Packet -> Packet 
-setIDP x p = 
+setIDP :: ID -> Packet -> Packet
+setIDP x p =
   let header = getHeader p :: Header V3
       newHeader = setID x header
   in setHeader newHeader p
 
-setMaxSizeP :: MaxSize -> Packet -> Packet 
-setMaxSizeP x p = 
+setMaxSizeP :: MaxSize -> Packet -> Packet
+setMaxSizeP x p =
   let header = getHeader p :: Header V3
       newHeader = setMaxSize x header
-  in setHeader newHeader p 
+  in setHeader newHeader p
 
-setCommunityP :: Community -> Packet -> Packet 
-setCommunityP x p = 
+setCommunityP :: Community -> Packet -> Packet
+setCommunityP x p =
   let header = getHeader p :: Header V2
       newHeader = setCommunity x header
   in setHeader newHeader p
 
 getEngineIdP :: Packet -> EngineId
-getEngineIdP p = 
+getEngineIdP p =
   let header = getHeader p :: Header V3
   in getAuthoritiveEngineId header
 
@@ -471,7 +478,7 @@ setEngineIdP x p =
   in setHeader newHeader p
 
 getEngineBootsP :: Packet -> EngineBootId
-getEngineBootsP p = 
+getEngineBootsP p =
   let header = getHeader p :: Header V3
   in getAuthoritiveEngineBoots header
 
@@ -480,9 +487,9 @@ setEngineBootsP x p =
   let header = getHeader p :: Header V3
       newHeader = setAuthoritiveEngineBoots x header
   in setHeader newHeader p
-  
+
 getEngineTimeP :: Packet -> Int32
-getEngineTimeP p = 
+getEngineTimeP p =
   let header = getHeader p :: Header V3
   in getAuthoritiveEngineTime header
 
@@ -493,40 +500,40 @@ setEngineTimeP x p =
   in setHeader newHeader p
 
 setReportableP :: Reportable -> Packet -> Packet
-setReportableP r p = 
+setReportableP r p =
   let header = getHeader p :: Header V3
       Flag _ a = getFlag header
       newHeader = setFlag (Flag r a) header
   in setHeader newHeader p
 
 setPrivAuthP :: PrivAuth -> Packet -> Packet
-setPrivAuthP x p = 
+setPrivAuthP x p =
   let header = getHeader p :: Header V3
       Flag r _ = getFlag header
       newHeader = setFlag (Flag r x) header
   in setHeader newHeader p
 
-setUserNameP :: ByteString -> Packet -> Packet 
-setUserNameP x p = 
+setUserNameP :: ByteString -> Packet -> Packet
+setUserNameP x p =
   let header = getHeader p :: Header V3
       sp = getSecurityParameter header
       newHeader = setSecurityParameter (sp { userName = x }) header
   in setHeader newHeader p
 
-setAuthenticationParametersP :: ByteString -> Packet -> Packet 
-setAuthenticationParametersP x p = 
+setAuthenticationParametersP :: ByteString -> Packet -> Packet
+setAuthenticationParametersP x p =
   let header = getHeader p :: Header V3
       sp = getSecurityParameter header
       newHeader = setSecurityParameter (sp { authenticationParameters = x }) header
   in setHeader newHeader p
-  
+
 getAuthenticationParametersP :: Packet -> ByteString
-getAuthenticationParametersP p = 
+getAuthenticationParametersP p =
   let header = getHeader p :: Header V3
   in authenticationParameters (getSecurityParameter header)
 
-setPrivParametersP :: ByteString -> Packet -> Packet 
-setPrivParametersP x p = 
+setPrivParametersP :: ByteString -> Packet -> Packet
+setPrivParametersP x p =
   let header = getHeader p :: Header V3
       sp = getSecurityParameter header
       newHeader = setSecurityParameter (sp { privacyParameters = x }) header
@@ -542,9 +549,9 @@ getVersion :: Packet -> Version
 getVersion (V2Packet v _ _) = v
 getVersion (V3Packet v _ _) = v
 
-getRid :: Packet -> RequestId 
-getRid (V2Packet _ _ (PDU r _)) = rid r 
-getRid (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = rid r 
+getRid :: Packet -> RequestId
+getRid (V2Packet _ _ (PDU r _)) = rid r
+getRid (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = rid r
 getRid _ = undefined
 
 setRid :: RequestId -> Packet -> Packet
@@ -552,9 +559,9 @@ setRid r (V2Packet v h (PDU req s)) = V2Packet v h (PDU req { rid = r } s)
 setRid r (V3Packet v h (ScopedPDU a b (PDU req s))) = V3Packet v h (ScopedPDU a b (PDU req { rid = r } s))
 setRid _ _ = undefined
 
-getErrorStatus :: Packet -> ErrorStatus 
-getErrorStatus (V2Packet _ _ (PDU r _)) = es r 
-getErrorStatus (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = es r 
+getErrorStatus :: Packet -> ErrorStatus
+getErrorStatus (V2Packet _ _ (PDU r _)) = es r
+getErrorStatus (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = es r
 getErrorStatus _ = undefined
 
 setErrorStatus :: ErrorStatus -> Packet -> Packet
@@ -563,8 +570,8 @@ setErrorStatus e (V3Packet v h (ScopedPDU a b (PDU req s))) = V3Packet v h (Scop
 setErrorStatus _ _ = undefined
 
 getSuite :: Packet -> Suite
-getSuite (V2Packet _ _ (PDU _ r)) = r 
-getSuite (V3Packet _ _ (ScopedPDU _ _ (PDU _ r))) = r 
+getSuite (V2Packet _ _ (PDU _ r)) = r
+getSuite (V3Packet _ _ (ScopedPDU _ _ (PDU _ r))) = r
 getSuite _ = undefined
 
 setSuite :: Suite -> Packet -> Packet
@@ -573,8 +580,8 @@ setSuite s (V3Packet v h (ScopedPDU a b (PDU req _))) = V3Packet v h (ScopedPDU 
 setSuite _ _ = undefined
 
 getRequest :: Packet -> Request
-getRequest (V2Packet _ _ (PDU r _)) = r 
-getRequest (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = r 
+getRequest (V2Packet _ _ (PDU r _)) = r
+getRequest (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = r
 getRequest _ = undefined
 
 setRequest :: Request -> Packet -> Packet
@@ -584,7 +591,7 @@ setRequest _ _ = undefined
 ----------------------------------------------------------------------------------------
 
 instance ASN1Object (Header V2) where
-    toASN1 (V2Header c) = toASN1 c 
+    toASN1 (V2Header c) = toASN1 c
     fromASN1 asn = flip runParseASN1State asn $ V2Header <$> getObject
 
 sS :: ParseASN1 ()
@@ -598,7 +605,7 @@ eS = do
     return ()
 
 instance ASN1Object (Header V3) where
-    toASN1 (V3Header i ms f sm sp) xs = 
+    toASN1 (V3Header i ms f sm sp) xs =
         Start Sequence : toASN1 i (toASN1 ms (toASN1 f (toASN1 sm [End Sequence]))) ++ toASN1 sp xs
     fromASN1 asn = flip runParseASN1State asn $
         V3Header <$> (sS *> getObject) <*> getObject <*> getObject <*> (getObject <* eS) <*> getObject
@@ -612,7 +619,7 @@ instance ASN1Object (PDU V2) where
     toASN1 (PDU (Inform rid es ei     ) sd) xs = (Start $ Container Context 6):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
     toASN1 (PDU (V2Trap rid es ei     ) sd) xs = (Start $ Container Context 7):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
     toASN1 (PDU (Report rid es ei      ) sd) xs = (Start $ Container Context 8):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 8)] ++ xs
-    fromASN1 asn = runParseASN1State pduParser asn 
+    fromASN1 asn = runParseASN1State pduParser asn
 
 pduParser :: ParseASN1 (PDU V2)
 pduParser = do
@@ -620,7 +627,7 @@ pduParser = do
     IntVal rid' <- getNext
     IntVal es <- getNext
     IntVal ei <- getNext
-    x <- getNextContainer Sequence 
+    x <- getNextContainer Sequence
     End (Container Context _) <- getNext
     let psuite = fromASN1 x
         rid = fromIntegral rid'
@@ -636,7 +643,7 @@ pduParser = do
          _ -> throw $ ServerException 9
 
 instance ASN1Object (PDU V3) where
-    toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs = 
+    toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs =
       [Start Sequence, OctetString x, OctetString y] ++ toASN1 pdu (End Sequence :xs)
     toASN1 (CryptedPDU cryptedBody) xs = OctetString cryptedBody : xs
     fromASN1 asn = flip runParseASN1State asn $ do
@@ -645,7 +652,7 @@ instance ASN1Object (PDU V3) where
              Start Sequence -> do
                  OctetString x <- getNext
                  OctetString y <- getNext
-                 p <- pduParser 
+                 p <- pduParser
                  End Sequence <- getNext
                  return $ ScopedPDU (ContextEngineID x) (ContextName y) p
              OctetString x -> return $ CryptedPDU x
@@ -657,7 +664,7 @@ instance ASN1Object Version where
     toASN1 Version3 xs = IntVal 3 : xs
     fromASN1 asn = flip runParseASN1State asn $ do
         IntVal x <- getNext
-        case x of 
+        case x of
              0 -> return Version1
              1 -> return Version2
              3 -> return Version3
@@ -724,7 +731,7 @@ instance ASN1Object Community where
         return $ Community x
 
 instance Show SecurityParameter where
-    show msg = "SecurityParameter:\n\t\tAuthoritiveEngineId: " 
+    show msg = "SecurityParameter:\n\t\tAuthoritiveEngineId: "
        ++ show (authoritiveEngineId msg )
        ++ "\n\t\tAuthoritiveEngineBoots: " ++ show (authoritiveEngineBoots msg )
        ++ "\n\t\tAuthoritiveEngineTime: " ++ show (authoritiveEngineTime msg )
@@ -774,12 +781,12 @@ instance ASN1Object SecurityModel where
 instance ASN1Object SecurityParameter where
     toASN1 SecurityParameter{..} xs = OctetString (encodeASN1' DER
       [ Start Sequence
-      ,   OctetString authoritiveEngineId 
-      ,   IntVal $ fromIntegral authoritiveEngineBoots 
-      ,   IntVal $ fromIntegral authoritiveEngineTime 
-      ,   OctetString userName 
-      ,   OctetString authenticationParameters 
-      ,   OctetString privacyParameters 
+      ,   OctetString authoritiveEngineId
+      ,   IntVal $ fromIntegral authoritiveEngineBoots
+      ,   IntVal $ fromIntegral authoritiveEngineTime
+      ,   OctetString userName
+      ,   OctetString authenticationParameters
+      ,   OctetString privacyParameters
       , End Sequence
       ]) : xs
     fromASN1 asn = flip runParseASN1State asn $ do
@@ -801,10 +808,10 @@ parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
      OctetString msgAuthenticationParameters <- getNext
      OctetString msgPrivacyParameters <- getNext
      End Sequence <- getNext
-     return $ SecurityParameter msgAuthoritiveEngineId (fromIntegral msgAuthoritiveEngineBoots) (fromIntegral msgAuthoritiveEngineTime) msgUserName msgAuthenticationParameters msgPrivacyParameters 
+     return $ SecurityParameter msgAuthoritiveEngineId (fromIntegral msgAuthoritiveEngineBoots) (fromIntegral msgAuthoritiveEngineTime) msgUserName msgAuthenticationParameters msgPrivacyParameters
 
 instance Binary (PDU V3) where
-    put = putByteString . encodeASN1' DER . flip toASN1 [] 
+    put = putByteString . encodeASN1' DER . flip toASN1 []
     get = toP . BL.toStrict <$> getRemainingLazyByteString
 --    encode s = encodeASN1' DER $ toASN1 s []
 --    decode = toP
@@ -820,7 +827,7 @@ instance Binary Packet where
 --    encode s = encodeASN1' DER $ toASN1 s []
     get = toB . BL.toStrict <$> getRemainingLazyByteString
 
-toB :: ByteString -> Packet 
+toB :: ByteString -> Packet
 toB bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
@@ -838,7 +845,7 @@ oidToString xs = foldr1 (\x y -> x ++ "." ++ y) $ map show xs
 
 instance ASN1Object Suite where
     toASN1 (Suite xs) ys = foldr toA [] xs ++ ys
-      where 
+      where
       toA ::Coupla -> [ASN1] -> [ASN1]
       toA (Coupla o v) zs = [Start Sequence , OID o] ++ toASN1 v (End Sequence : zs)
     fromASN1 asn = flip runParseASN1State asn $ do
@@ -879,7 +886,7 @@ instance Exception ClientException
 -- copy paste from asn1-encoding
 
 packInteger :: Integer -> ByteString
-packInteger = B.pack . bytesOfInt 
+packInteger = B.pack . bytesOfInt
 
 unpackInteger :: ByteString -> Either String Integer
 unpackInteger = getIntegerRaw "Integer"
@@ -933,7 +940,7 @@ uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral 
 
 cleanPass :: ByteString
 cleanPass = B.pack $ replicate 12 0x00
- 
+
 data PrivType = DES | AES deriving (Show, Eq)
 data AuthType = MD5 | SHA deriving (Show, Eq)
 type Key = ByteString
@@ -947,16 +954,16 @@ hashlazy :: AuthType -> BL.ByteString -> ByteString
 hashlazy MD5 = Md5.hashlazy
 hashlazy SHA = Sha.hashlazy
 
--- | (only V3) sign Packet 
-signPacket :: AuthType -> Key -> Packet -> Packet 
-signPacket at key packet = 
+-- | (only V3) sign Packet
+signPacket :: AuthType -> Key -> Packet -> Packet
+signPacket at key packet =
     let packetAsBin = BL.toStrict $ encode packet
-        sign = B.take 12 $ HMAC.hmac (hash at) 64 key packetAsBin 
+        sign = B.take 12 $ HMAC.hmac (hash at) 64 key packetAsBin
     in setAuthenticationParametersP sign packet
 
 -- | create auth key from password and context engine id
 passwordToKey :: AuthType -> Password -> EngineId -> Key
-passwordToKey at pass eid = 
+passwordToKey at pass eid =
   let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
       authKey = hashlazy at buf
   in hash at $ authKey <> eid <> authKey
@@ -973,13 +980,13 @@ type Rand32 = Int32
 type Rand64 = Int64
 
 desEncrypt :: Key -> EngineBootId -> Rand32 -> Raw -> (Encrypted, Salt)
-desEncrypt privKey engineBoot localInt dataToEncrypt = 
+desEncrypt privKey engineBoot localInt dataToEncrypt =
     let desKey = B.take 8 privKey
         preIV = B.drop 8 $ B.take 16 privKey
         salt = toSalt engineBoot localInt
         ivR = B.pack $ zipWith xor (B.unpack preIV) (B.unpack salt)
         Just iv = Priv.makeIV ivR
-        Right key = Priv.makeKey desKey 
+        Right key = Priv.makeKey desKey
         des = Priv.cipherInit key :: Priv.DES
         tailLen = (8 - B.length dataToEncrypt `rem` 8) `rem` 8
         tailB = B.replicate tailLen 0x00
@@ -1011,7 +1018,7 @@ wToBs x = B.pack
 
 toSalt :: Int32 -> Int32 -> ByteString
 toSalt x y = B.pack
-  [ fromIntegral $ x `shiftR` 24 .&. 0xff 
+  [ fromIntegral $ x `shiftR` 24 .&. 0xff
   , fromIntegral $ x `shiftR` 16 .&. 0xff
   , fromIntegral $ x `shiftR`  8 .&. 0xff
   , fromIntegral $ x `shiftR`  0 .&. 0xff
@@ -1043,13 +1050,13 @@ aesDecrypt privKey privParameters engineBoot engineTime dataToDecrypt =
     in stripBS $ Priv.cfbDecrypt aes iv dataToDecrypt
 
 stripBS :: ByteString -> ByteString
-stripBS bs = 
+stripBS bs =
     let bs' = B.drop 1 bs
         l1 = fromIntegral $ B.head bs'
     in if testBit l1 7
         then case clearBit l1 7 of
                   0   -> throw $ ServerException 12
-                  len -> 
+                  len ->
                     let size = uintbs (B.take len (B.drop 1 bs'))
                     in B.take (size + len + 2) bs
         else B.take (l1 + 2) bs
