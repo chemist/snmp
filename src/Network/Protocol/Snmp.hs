@@ -6,12 +6,15 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE RankNTypes #-}
 module Network.Protocol.Snmp (
 -- * snmp types
   Value(..)
 , OID
 , OIDS
 -- * top level types
+, V1
 , V2
 , V3
 , Version(..)
@@ -112,16 +115,16 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 #if MIN_VERSION_base(4,7,0)
-import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
+import Data.Bits (testBit, shiftL, (.|.), (.&.), setBit, shiftR, zeroBits, xor, clearBit)
 #else
-import Data.Bits (testBit, complement, shiftL, (.|.), (.&.), setBit, shiftR, xor, clearBit, Bits(..))
+import Data.Bits (testBit, shiftL, (.|.), (.&.), setBit, shiftR, xor, clearBit, Bits(..))
+import Control.Applicative ((<$>), (<*>), (*>), (<*))
 #endif
+import Data.Monoid ((<>))
 import Data.ASN1.Types (ASN1Object(..), ASN1(..), OID, ASN1ConstructionType(..), ASN1Class(..))
 import Data.ASN1.Parse (getNext, getObject, runParseASN1, runParseASN1State, ParseASN1, getNextContainer, onNextContainer, getMany)
 import Data.ASN1.BinaryEncoding (DER(..))
 import Data.ASN1.Encoding (encodeASN1', decodeASN1')
-import Control.Applicative ((<$>), (<*>), (*>), (<*))
-import Data.Monoid (Monoid, (<>))
 import Control.Exception (Exception, throw)
 import Data.Typeable (Typeable)
 import qualified Crypto.Hash.MD5 as Md5
@@ -701,19 +704,11 @@ instance ASN1Object Value where
       unp (OctetString x) = return $ String x
       unp (Other Application 0 y) = let [a1, a2, a3, a4] = B.unpack y
                                     in return $ IpAddress a1 a2 a3 a4
-      unp (Other Application 1 y) = case unpackInteger y of
-                                         Right z -> return $ Counter32 (fI z)
-                                         Left _ -> throw $ ServerException 9
-      unp (Other Application 2 y) = case unpackInteger y of
-                                         Right z -> return $ Gauge32 (fI z)
-                                         Left _ -> throw $ ServerException 9
-      unp (Other Application 3 y) = case unpackInteger y of
-                                         Right z -> return $ TimeTicks (fI z)
-                                         Left _ -> throw $ ServerException 9
+      unp (Other Application 1 y) = return $ Counter32 $ fI $  unpackInteger y 
+      unp (Other Application 2 y) = return $ Gauge32 $ fI $  unpackInteger y 
+      unp (Other Application 3 y) = return $ TimeTicks $ fI $  unpackInteger y 
       unp (Other Application 4 y) = return $ Opaque y
-      unp (Other Application 6 y) = case unpackInteger y of
-                                         Right z -> return $ Counter64 (fI z)
-                                         Left _ -> throw $ ServerException 9
+      unp (Other Application 6 y) = return $ Counter64 $ fI $  unpackInteger y 
       unp (OID x) = return . OI $ x
       unp _ = throw $ ServerException 9
 
@@ -876,60 +871,27 @@ instance Show ClientException where
 
 instance Exception ClientException
 
--- copy paste from asn1-encoding
-
 packInteger :: Integer -> ByteString
-packInteger = B.pack . bytesOfInt 
+packInteger i 
+  | i > 0 = 
+    let simple = BL.toStrict $ BL.dropWhile (== 0) $ runPut . putWord64be . fromIntegral $ i
+    in if (B.head simple >= 128) 
+          then B.cons 0 simple
+          else simple
+  | i < 0 =
+     let simple = BL.toStrict $ BL.dropWhile (== 255) . runPut . putWord64be . fromIntegral $ i
+         l = B.length simple 
+     in case (l, B.head simple < 128) of
+             (0, _) -> "\255"
+             (_, True) -> B.cons 255 simple
+             _ -> simple
+  | otherwise = "\NUL"
 
-unpackInteger :: ByteString -> Either String Integer
-unpackInteger = getIntegerRaw "Integer"
-
-bytesOfInt :: Integer -> [Word8]
-bytesOfInt i
-  | i > 0      = if testBit (head uints) 7 then 0 : uints else uints
-  | i == 0     = [0]
-  | otherwise  = if testBit (head nints) 7 then nints else 0xff : nints
-      where
-      uints = bytesOfUInt (abs i)
-      nints = reverse $ plusOne $ reverse $ map complement uints
-      plusOne []     = [1]
-      plusOne (x:xs) = if x == 0xff then 0 : plusOne xs else (x+1) : xs
-
-
---bytesOfUInt i = B.unfoldr (\x -> if x == 0 then Nothing else Just (fromIntegral (x .&. 0xff), x `shiftR` 8)) i
-bytesOfUInt :: Integer -> [Word8]
-bytesOfUInt x = reverse (list x)
-  where list i = if i <= 0xff then [fromIntegral i] else (fromIntegral i .&. 0xff) : list (i `shiftR` 8)
-
-{- | According to X.690 section 8.4 integer and enumerated values should be encoded the same way. -}
-getIntegerRaw :: String -> ByteString -> Either String Integer
-getIntegerRaw typestr s
-    | B.length s == 0 = Left $ typestr ++ ": null encoding"
-    | B.length s == 1 = Right $ snd $ intOfBytes s
-    | otherwise       =
-        if (v1 == 0xff && testBit v2 7) || (v1 == 0x0 && not (testBit v2 7))
-            then Left $ typestr ++ ": not shortest encoding"
-            else Right $ snd $ intOfBytes s
-    where
-        v1 = s `B.index` 0
-        v2 = s `B.index` 1
-
-{- | intOfBytes returns the number of bytes in the list and
-the represented integer by a two's completement list of bytes -}
-intOfBytes :: ByteString -> (Int, Integer)
-intOfBytes b
-    | B.length b == 0   = (0, 0)
-    | otherwise         = (len, if isNeg then -(maxIntLen - v + 1) else v)
-    where
-        (len, v)  = uintOfBytes b
-        maxIntLen = 2 ^ (8 * len) - 1
-        isNeg     = testBit (B.head b) 7
-
-{- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
-uintOfBytes :: ByteString -> (Int, Integer)
-uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0 b)
-
-------------------------------------------------------------------------------------------------------
+unpackInteger :: ByteString -> Integer
+unpackInteger bs
+  | (B.head bs >= 128) = (fromIntegral $ runGet getWord64be . BL.fromStrict $ (B.replicate (8 - B.length bs) 255) <> bs) - (1 + fromIntegral (maxBound :: Word64))
+  | (B.head bs < 128) = fromIntegral . runGet getWord64be . BL.fromStrict $ (B.replicate (8 - B.length bs) 0) <> bs
+  | otherwise = 0
 
 cleanPass :: ByteString
 cleanPass = B.pack $ replicate 12 0x00
