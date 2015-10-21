@@ -1,15 +1,15 @@
 name:                snmp
-version:             0.2.1.2
-synopsis:            API for write snmp client.
-description:         API for write snmp client.        
+version:             0.3.0.0
+synopsis:            SNMP protocol implementation.
+description:         SNMP protocol implementation.
 license:             BSD3
 license-file:        LICENSE
 author:              Alexey Smirnov
 maintainer:          Alexey Smirnov <chemistmail@gmail.com>
--- copyright:           
+-- copyright:
 category:            Network
 build-type:          Simple
--- extra-source-files:  
+-- extra-source-files:
 cabal-version:       >=1.10
 
 source-repository head
@@ -17,27 +17,19 @@ source-repository head
   location:          git@github.com:chemist/snmp.git
 
 library
-  exposed-modules: Network.Protocol.Snmp, Network.Snmp.Client, Network.Snmp.Example
-  other-modules: Network.Snmp.Client.Internal, Network.Snmp.Client.Types, Network.Snmp.Client.Version2, Network.Snmp.Client.Version3     
-  -- other-extensions:    
-  build-depends:       base >=4.6 && <4.9, 
-                       asn1-encoding, 
-                       asn1-types, 
-                       asn1-parse, 
-                       bytestring, 
-                       network, 
-                       mtl, 
-                       text, 
-                       time, 
-                       containers, 
-                       async, 
-                       binary, 
-                       network-info, 
-                       cryptohash, 
-                       cipher-des, 
-                       crypto-cipher-types, 
-                       securemem, 
-                       random, 
+  exposed-modules: Network.Protocol.Snmp
+  -- other-extensions:
+  build-depends:       base >=4.6 && <5,
+                       asn1-encoding,
+                       asn1-types,
+                       asn1-parse,
+                       bytestring,
+                       mtl,
+                       containers,
+                       binary,
+                       cryptohash,
+                       cipher-des,
+                       crypto-cipher-types,
                        cipher-aes
   hs-source-dirs:      src
   ghc-options: -Wall
