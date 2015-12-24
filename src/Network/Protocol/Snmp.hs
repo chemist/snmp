@@ -125,8 +125,8 @@ import           Control.Exception        (Exception, throw)
 import qualified Crypto.Cipher.AES        as Priv
 import qualified Crypto.Cipher.DES        as Priv
 import qualified Crypto.Cipher.Types      as Priv
-import qualified Crypto.Hash.MD5          as Md5
-import qualified Crypto.Hash.SHA1         as Sha
+import qualified Crypto.Error             as Priv
+import qualified Crypto.Hash              as Hash
 import qualified Crypto.MAC.HMAC          as HMAC
 import           Data.ASN1.BinaryEncoding (DER (..))
 import           Data.ASN1.Encoding       (decodeASN1', encodeASN1')
@@ -140,6 +140,7 @@ import           Data.ASN1.Types          (ASN1 (..), ASN1Class (..),
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.Binary.Put
+import qualified Data.ByteArray           as BA
 import           Data.Int
 import           Data.Monoid              ((<>))
 import           Data.Typeable            (Typeable)
@@ -905,19 +906,23 @@ data AuthType = MD5 | SHA deriving (Show, Eq)
 type Key = ByteString
 type Password = ByteString
 
-hash :: AuthType -> ByteString -> ByteString
-hash MD5 = Md5.hash
-hash SHA = Sha.hash
+hash :: (BA.ByteArray a) => AuthType -> ByteString -> a
+hash MD5 bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.MD5)
+hash SHA bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.SHA1)
 
-hashlazy :: AuthType -> BL.ByteString -> ByteString
-hashlazy MD5 = Md5.hashlazy
-hashlazy SHA = Sha.hashlazy
+hashlazy :: (BA.ByteArray a) => AuthType -> BL.ByteString -> a
+hashlazy MD5 bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
+hashlazy SHA bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
+
+hmac :: (BA.ByteArrayAccess key, BA.ByteArray msg) => AuthType -> key -> msg -> ByteString
+hmac MD5 key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.MD5)
+hmac SHA key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.SHA1)
 
 -- | (only V3) sign Packet
 signPacket :: AuthType -> Key -> Packet -> Packet
 signPacket at key packet =
     let packetAsBin = BL.toStrict $ encode packet
-        sign = B.take 12 $ HMAC.hmac (hash at) 64 key packetAsBin
+        sign = B.take 12 $ hmac at key packetAsBin
     in setAuthenticationParametersP sign packet
 
 -- | create auth key from password and context engine id
@@ -944,9 +949,9 @@ desEncrypt privKey engineBoot localInt dataToEncrypt =
         preIV = B.drop 8 $ B.take 16 privKey
         salt = toSalt engineBoot localInt
         ivR = B.pack $ zipWith xor (B.unpack preIV) (B.unpack salt)
-        Just iv = Priv.makeIV ivR
-        Right key = Priv.makeKey desKey
-        des = Priv.cipherInit key :: Priv.DES
+        Just iv = Priv.makeIV ivR :: Maybe (Priv.IV Priv.DES)
+        -- Right key = Priv.makeKey desKey
+        Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
         tailLen = (8 - B.length dataToEncrypt `rem` 8) `rem` 8
         tailB = B.replicate tailLen 0x00
     in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
@@ -957,9 +962,9 @@ aesEncrypt :: Key -> EngineBootId -> EngineTime -> Rand64 -> Raw -> (Encrypted, 
 aesEncrypt privKey engineBoot engineTime rcounter dataToEncrypt =
     let aesKey = B.take 16 privKey
         salt = wToBs rcounter
-        Just iv = Priv.makeIV $ toSalt engineBoot engineTime <> salt
-        Right key = Priv.makeKey aesKey
-        aes = Priv.cipherInit key :: Priv.AES128
+        Just iv = Priv.makeIV $ toSalt engineBoot engineTime <> salt :: Maybe (Priv.IV Priv.AES128)
+        -- Right key = Priv.makeKey aesKey
+        Priv.CryptoPassed aes = Priv.cipherInit aesKey :: Priv.CryptoFailable Priv.AES128
     in (Priv.cfbEncrypt aes iv dataToEncrypt, salt)
 
 
@@ -993,9 +998,9 @@ desDecrypt privKey privParameters dataToDecrypt =
         preIV = B.drop 8 $ B.take 16 privKey
         salt = privParameters
         ivR = zipWith xor (B.unpack preIV) (B.unpack salt)
-        Just iv = Priv.makeIV (B.pack ivR)
-        Right key = Priv.makeKey desKey
-        des = Priv.cipherInit key :: Priv.DES
+        Just iv = (Priv.makeIV (B.pack ivR) :: Maybe (Priv.IV Priv.DES))
+        -- Right key = Priv.makeKey desKey
+        Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
     in stripBS $ Priv.cbcDecrypt des iv dataToDecrypt
 
 aesDecrypt :: Key -> Salt -> EngineBootId -> EngineTime -> Encrypted -> Raw
@@ -1003,9 +1008,9 @@ aesDecrypt privKey privParameters engineBoot engineTime dataToDecrypt =
     let aesKey = B.take 16 privKey
         salt = privParameters
         ivR = toSalt engineBoot engineTime <> salt
-        Just iv = Priv.makeIV ivR
-        Right key = Priv.makeKey aesKey
-        aes = Priv.cipherInit key :: Priv.AES128
+        Just iv = (Priv.makeIV ivR :: Maybe (Priv.IV Priv.AES128))
+        -- Right key = Priv.makeKey aesKey
+        Priv.CryptoPassed aes = Priv.cipherInit aesKey :: Priv.CryptoFailable Priv.AES128
     in stripBS $ Priv.cfbDecrypt aes iv dataToDecrypt
 
 stripBS :: ByteString -> ByteString

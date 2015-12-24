@@ -27,10 +27,8 @@ library
                        mtl,
                        containers,
                        binary,
-                       cryptohash,
-                       cipher-des,
-                       crypto-cipher-types,
-                       cipher-aes
+                       cryptonite,
+                       memory
   hs-source-dirs:      src
   ghc-options: -Wall -O2
   ghc-prof-options: -fprof-auto -fprof-cafs
