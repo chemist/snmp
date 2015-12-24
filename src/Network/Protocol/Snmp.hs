@@ -109,16 +109,17 @@ module Network.Protocol.Snmp (
 )
 where
 
-import           Data.ByteString      (ByteString)
-import qualified Data.ByteString      as B
-import qualified Data.ByteString.Lazy as BL
+import           Data.ByteString          (ByteString)
+import qualified Data.ByteString          as B
+import qualified Data.ByteString.Lazy     as BL
+
 #if MIN_VERSION_base(4,7,0)
-import Data.Bits (clearBit, setBit, shiftL, shiftR, testBit, xor, zeroBits,
-                  (.&.), (.|.))
+import           Data.Bits                (clearBit, setBit, shiftL, shiftR,
+                                           testBit, xor, zeroBits, (.&.), (.|.))
 #else
-import Control.Applicative ((*>), (<$>), (<*), (<*>))
-import Data.Bits           (Bits (..), clearBit, setBit, shiftL, shiftR,
-                            testBit, xor, (.&.), (.|.))
+import           Control.Applicative      ((*>), (<$>), (<*), (<*>))
+import           Data.Bits                (Bits (..), clearBit, setBit, shiftL,
+                                           shiftR, testBit, xor, (.&.), (.|.))
 #endif
 import           Control.Exception        (Exception, throw)
 import qualified Crypto.Cipher.AES        as Priv
