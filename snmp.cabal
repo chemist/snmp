@@ -32,5 +32,6 @@ library
                        crypto-cipher-types,
                        cipher-aes
   hs-source-dirs:      src
-  ghc-options: -Wall
+  ghc-options: -Wall -O2
+  ghc-prof-options: -fprof-auto -fprof-cafs
   default-language:    Haskell2010
