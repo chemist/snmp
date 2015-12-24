@@ -103,7 +103,7 @@ module Network.Protocol.Snmp (
 , aesDecrypt
 , toSalt
 -- * exceptions
-, ClientException(..)
+, SnmpException(..)
 -- * usage example
 -- $example
 )
@@ -317,9 +317,8 @@ newtype ContextEngineID = ContextEngineID ByteString deriving (Show, Eq)
 newtype ContextName = ContextName ByteString deriving (Show, Eq)
 
 -- | some exception
-data ClientException = TimeoutException
-                     | ServerException Integer
-                     deriving (Typeable, Eq)
+data SnmpException = SnmpException ErrorStatus
+    deriving (Typeable, Eq)
 
 -- | some universal getters, setters
 class HasItem a where
@@ -642,7 +641,7 @@ pduParser = do
          (6, Right (suite, _)) -> return $ PDU (Inform         rid es ei) suite
          (7, Right (suite, _)) -> return $ PDU (V2Trap         rid es ei) suite
          (8, Right (suite, _)) -> return $ PDU (Report         rid es ei) suite
-         _ -> throw $ ServerException 9
+         _ -> throw $ SnmpException 9
 
 instance ASN1Object (PDU V3) where
     toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs =
@@ -658,7 +657,7 @@ instance ASN1Object (PDU V3) where
                  End Sequence <- getNext
                  return $ ScopedPDU (ContextEngineID x) (ContextName y) p
              OctetString x -> return $ CryptedPDU x
-             _ -> throw $ ServerException 9
+             _ -> throw $ SnmpException 9
 
 instance ASN1Object Version where
     toASN1 Version1 xs = IntVal 0 : xs
@@ -670,13 +669,13 @@ instance ASN1Object Version where
              0 -> return Version1
              1 -> return Version2
              3 -> return Version3
-             _ -> throw $ ServerException 10
+             _ -> throw $ SnmpException 10
 
 instance ASN1Object Packet where
     toASN1 (V2Packet Version1 header body) _ = Start Sequence : toASN1 Version1 (toASN1 header (toASN1 body [End Sequence]))
     toASN1 (V2Packet Version2 header body) _ = Start Sequence : toASN1 Version2 (toASN1 header (toASN1 body [End Sequence]))
     toASN1 (V3Packet Version3 header body) _ = Start Sequence : toASN1 Version3 (toASN1 header (toASN1 body [End Sequence]))
-    toASN1 _ _ = throw $ ServerException 10
+    toASN1 _ _ = throw $ SnmpException 10
     fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
         v <- getObject
         case v of
@@ -716,7 +715,7 @@ instance ASN1Object Value where
       unp (Other Application 4 y) = return $ Opaque y
       unp (Other Application 6 y) = return $ Counter64 $ fI $  unpackInteger y
       unp (OID x) = return . OI $ x
-      unp _ = throw $ ServerException 9
+      unp _ = throw $ SnmpException 9
 
 instance ASN1Object Community where
     toASN1 (Community x) xs = OctetString x : xs
@@ -761,7 +760,7 @@ instance ASN1Object Flag where
                       (True, True) -> Flag (testBit w 2) AuthPriv
                       (False, False) -> Flag (testBit w 2) NoAuthNoPriv
                       (True, False) -> Flag (testBit w 2) AuthNoPriv
-                      _ -> throw $ ServerException 10
+                      _ -> throw $ SnmpException 10
 
 
 instance ASN1Object SecurityModel where
@@ -770,7 +769,7 @@ instance ASN1Object SecurityModel where
         IntVal x <- getNext
         case x of
              3 -> return UserBasedSecurityModel
-             _ -> throw $ ServerException 7
+             _ -> throw $ SnmpException 7
 
 instance ASN1Object SecurityParameter where
     toASN1 SecurityParameter{..} xs = OctetString (encodeASN1' DER
@@ -786,10 +785,10 @@ instance ASN1Object SecurityParameter where
     fromASN1 asn = flip runParseASN1State asn $ do
         OctetString packed <- getNext
         let r = case decodeASN1' DER packed of
-             Left _ -> throw $ ServerException 9
+             Left _ -> throw $ SnmpException 9
              Right asn' -> parseMsgSecurityParameter asn'
         case r of
-             Left _ -> throw $ ServerException 9
+             Left _ -> throw $ SnmpException 9
              Right r' -> return r'
 
 parseMsgSecurityParameter :: [ASN1] -> Either String SecurityParameter
@@ -814,7 +813,7 @@ toP :: ByteString -> PDU V3
 toP bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
-                 _ -> throw $ ServerException 9
+                 _ -> throw $ SnmpException 9
 
 instance Binary Packet where
     put = putByteString . encodeASN1' DER . flip toASN1 []
@@ -825,7 +824,7 @@ toB :: ByteString -> Packet
 toB bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
-                 _ -> throw $ ServerException 9
+                 _ -> throw $ SnmpException 9
                  --}
                  --
 instance Show Coupla where
@@ -851,31 +850,30 @@ instance ASN1Object Suite where
                return $ Coupla x v
         return $ Suite xs
 
-instance Show ClientException where
-    show TimeoutException = "Timeout exception"
-    show (ServerException 1) = "tooBig"
-    show (ServerException 2) = "noSuchName"
-    show (ServerException 3) = "badValue"
-    show (ServerException 4) = "readOnly"
-    show (ServerException 5) = "genErr"
-    show (ServerException 6) = "noAccess"
-    show (ServerException 7) = "wrongType"
-    show (ServerException 8) = "wrongLength"
-    show (ServerException 9) = "wrongEncoding"
-    show (ServerException 10) = "wrongValue"
-    show (ServerException 11) = "noCreation"
-    show (ServerException 12) = "inconsistentValue"
-    show (ServerException 13) = "resourceUnavailable"
-    show (ServerException 14) = "commitFailed"
-    show (ServerException 15) = "undoFailed"
-    show (ServerException 16) = "authorizationError"
-    show (ServerException 17) = "notWritable"
-    show (ServerException 18) = "inconsistentName"
-    show (ServerException 80) = "General IO failure occured on the set request"
-    show (ServerException 81) = "General SNMP timeout occured"
-    show (ServerException x) = "Exception " ++ show x
+instance Show SnmpException where
+    show (SnmpException 1) = "tooBig"
+    show (SnmpException 2) = "noSuchName"
+    show (SnmpException 3) = "badValue"
+    show (SnmpException 4) = "readOnly"
+    show (SnmpException 5) = "genErr"
+    show (SnmpException 6) = "noAccess"
+    show (SnmpException 7) = "wrongType"
+    show (SnmpException 8) = "wrongLength"
+    show (SnmpException 9) = "wrongEncoding"
+    show (SnmpException 10) = "wrongValue"
+    show (SnmpException 11) = "noCreation"
+    show (SnmpException 12) = "inconsistentValue"
+    show (SnmpException 13) = "resourceUnavailable"
+    show (SnmpException 14) = "commitFailed"
+    show (SnmpException 15) = "undoFailed"
+    show (SnmpException 16) = "authorizationError"
+    show (SnmpException 17) = "notWritable"
+    show (SnmpException 18) = "inconsistentName"
+    show (SnmpException 80) = "General IO failure occured on the set request"
+    show (SnmpException 81) = "General SNMP timeout occured"
+    show (SnmpException x) = "Exception " ++ show x
 
-instance Exception ClientException
+instance Exception SnmpException
 
 packInteger :: Integer -> ByteString
 packInteger i
@@ -1016,7 +1014,7 @@ stripBS bs =
         l1 = fromIntegral $ B.head bs'
     in if testBit l1 7
         then case clearBit l1 7 of
-                  0   -> throw $ ServerException 12
+                  0   -> throw $ SnmpException 12
                   len ->
                     let size = uintbs (B.take len (B.drop 1 bs'))
                     in B.take (size + len + 2) bs
@@ -1024,4 +1022,3 @@ stripBS bs =
     where
       {- uintbs return the unsigned int represented by the bytes -}
       uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
-
