@@ -1,7 +1,7 @@
 name:                snmp
 version:             0.3.0.0
 synopsis:            SNMP protocol implementation.
-description:         SNMP protocol implementation.
+description:         See README.md
 license:             BSD3
 license-file:        LICENSE
 author:              Alexey Smirnov
