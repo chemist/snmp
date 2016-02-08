@@ -207,7 +207,7 @@ data V3
 data Version = Version1
              | Version2
              | Version3
-             deriving (Eq, Show)
+             deriving (Eq, Ord, Show)
 
 type OIDS = [OID]
 
@@ -251,7 +251,7 @@ data Value = OI OID
            | NoSuchInstance
            | NoSuchObject
            | EndOfMibView
-           deriving (Show, Eq)
+           deriving (Show, Ord, Eq)
 
 -- | Request id
 type RequestId = Int32
@@ -270,11 +270,11 @@ data Request = GetRequest     { rid :: RequestId, es :: ErrorStatus, ei :: Error
              | GetBulk        { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
              | Inform         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
              | V2Trap         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | Report         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             deriving (Show, Eq)
+             deriving (Show, Ord, Eq)
 
 -- | Coupla oid -> value
-data Coupla = Coupla { oid :: OID, value :: Value } deriving (Eq)
+data Coupla = Coupla { oid :: !OID, value :: !Value }
+  deriving (Eq, Ord)
 
 -- | Variable bindings
 newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
@@ -282,25 +282,31 @@ newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
 -- ** Types describing header
 
 -- | (snmp2 only) Community for 2(1) version
-newtype Community = Community ByteString deriving (Show, Eq)
+newtype Community = Community ByteString
+  deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) Message Identifier (like RequestId in PDU)
-newtype ID = ID Int32 deriving (Show, Eq)
+newtype ID = ID Int32
+  deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) Message max size must be > 484
-newtype MaxSize = MaxSize Integer deriving (Show, Eq)
+newtype MaxSize = MaxSize Int
+  deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) rfc3412, type for create message flag
-data PrivAuth = NoAuthNoPriv | AuthNoPriv | AuthPriv deriving (Show, Eq)
+data PrivAuth = NoAuthNoPriv | AuthNoPriv | AuthPriv
+  deriving (Show, Eq, Ord, Enum)
 
 -- | (snmp3 only) rfc3412, as PrivAuth
 type Reportable = Bool
 
 -- | (snmp3 only) rfc3412, message flag
-data Flag = Flag Reportable PrivAuth  deriving (Show, Eq)
+data Flag = Flag Reportable PrivAuth
+  deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) rfc3412, security model
-data SecurityModel = UserBasedSecurityModel deriving (Show, Eq)
+data SecurityModel = UserBasedSecurityModel
+  deriving (Show, Eq)
 
 -- | (snmp3 only) rfc3412, security parameter
 data SecurityParameter = SecurityParameter
@@ -311,14 +317,17 @@ data SecurityParameter = SecurityParameter
   , authenticationParameters :: ByteString
   , privacyParameters        :: ByteString
   }
-  deriving (Eq)
+  deriving (Eq, Ord)
 
 -- | (snmp3 only) rfc3412, types for ScopedPDU
-newtype ContextEngineID = ContextEngineID ByteString deriving (Show, Eq)
-newtype ContextName = ContextName ByteString deriving (Show, Eq)
+newtype ContextEngineID = ContextEngineID ByteString
+  deriving (Show, Eq, Ord)
+
+newtype ContextName = ContextName ByteString
+  deriving (Show, Eq, Ord)
 
 -- | some exception
-data SnmpException = SnmpException ErrorStatus
+newtype SnmpException = SnmpException ErrorStatus
     deriving (Typeable, Eq)
 
 -- | some universal getters, setters
