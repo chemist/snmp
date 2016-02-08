@@ -1,7 +1,7 @@
 snmp
 ====
 
-[![Build Status](https://travis-ci.org/chemist/snmp.svg?branch=master)](https://travis-ci.org/chemist/snmp)
+[![Build Status](https://travis-ci.org/SimpleX91/snmp.svg?branch=master)](https://travis-ci.org/SimpleX91/snmp)
 [![Gitter chat](https://badges.gitter.im/chemist/snmp.png)](https://gitter.im/chemist/snmp)
 
 SNMP protocol implementation. Supports v1, v2c and v3 versions.
