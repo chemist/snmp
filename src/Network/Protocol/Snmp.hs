@@ -910,8 +910,8 @@ unpackInteger bs
 cleanPass :: ByteString
 cleanPass = B.pack $ replicate 12 0x00
 
-data PrivType = DES | AES deriving (Show, Eq)
-data AuthType = MD5 | SHA deriving (Show, Eq)
+data PrivType = DES | AES deriving (Show, Ord, Eq)
+data AuthType = MD5 | SHA deriving (Show, Ord, Eq)
 type Key = ByteString
 type Password = ByteString
 
