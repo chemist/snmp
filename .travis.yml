@@ -2,22 +2,10 @@
 
 # The following enables several GHC versions to be tested; often it's enough to test only against the last release in a major GHC version. Feel free to omit lines listings versions you don't need/want testing for.
 env:
-    # - GHCVER=6.12.3
-    # - GHCVER=7.0.1
-    # - GHCVER=7.0.2
-    # - GHCVER=7.0.3
-    # - GHCVER=7.0.4
-    # - GHCVER=7.2.1
-    # - GHCVER=7.2.2
-    # - GHCVER=7.4.1
-    # - GHCVER=7.4.2
-    # - GHCVER=7.6.1
-    - CABALVER=1.18 GHCVER=7.6.3
-    - CABALVER=1.18 GHCVER=7.8.4
     - CABALVER=1.22 GHCVER=7.10.1
-   # - GHCVER=7.8.1 # see note about Alex/Happy
-   # - GHCVER=7.8.2 # see note about Alex/Happy
-# - GHCVER=head  # see section about GHC HEAD snapshots
+    - GHCVER=7.10.2
+    - GHCVER=7.10.3
+    - GHCVER=head  # see section about GHC HEAD snapshots
 
 # Note: the distinction between `before_install` and `install` is not important.
 before_install:
