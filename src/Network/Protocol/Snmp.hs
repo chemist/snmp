@@ -237,16 +237,16 @@ deriving instance Show (PDU a)
 deriving instance Eq (PDU a)
 
 -- | Snmp data types
-data Value = OI OID
+data Value = OI !OID
            | Zero
-           | Integer Int32
-           | String ByteString
-           | IpAddress Word8 Word8 Word8 Word8
-           | Counter32 Word32
-           | Gauge32 Word32
-           | TimeTicks Word32
-           | Opaque ByteString
-           | Counter64 Word64
+           | Integer !Int32
+           | String !ByteString
+           | IpAddress !Word8 !Word8 !Word8 !Word8
+           | Counter32 !Word32
+           | Gauge32 !Word32
+           | TimeTicks !Word32
+           | Opaque !ByteString
+           | Counter64 !Word64
            | ZeroDotZero
            | NoSuchInstance
            | NoSuchObject
@@ -263,13 +263,14 @@ type ErrorStatus = Integer
 type ErrorIndex = Integer
 
 -- | requests
-data Request = GetRequest     { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | GetNextRequest { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | GetResponse    { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | SetRequest     { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | GetBulk        { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | Inform         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | V2Trap         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
+data Request = GetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | GetNextRequest { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | GetResponse    { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | SetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | GetBulk        { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | Inform         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | V2Trap         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | Report         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
              deriving (Show, Ord, Eq)
 
 -- | Coupla oid -> value
@@ -749,10 +750,10 @@ instance ASN1Object ID where
         return $ ID (fromIntegral x)
 
 instance ASN1Object MaxSize where
-    toASN1 (MaxSize x) xs = IntVal x : xs
+    toASN1 (MaxSize x) xs = IntVal (fromIntegral x) : xs
     fromASN1 asn = flip runParseASN1State asn $ do
         IntVal x <- getNext
-        return $ MaxSize x
+        return $ MaxSize (fromInteger x)
 
 instance ASN1Object Flag where
     toASN1 (Flag r pa) xs = let zero = zeroBits :: Word8
@@ -771,7 +772,6 @@ instance ASN1Object Flag where
                       (False, False) -> Flag (testBit w 2) NoAuthNoPriv
                       (True, False) -> Flag (testBit w 2) AuthNoPriv
                       _ -> throw $ SnmpException 10
-
 
 instance ASN1Object SecurityModel where
     toASN1 UserBasedSecurityModel xs = IntVal 3 : xs
@@ -979,26 +979,26 @@ aesEncrypt privKey engineBoot engineTime rcounter dataToEncrypt =
 
 wToBs :: Int64 -> ByteString
 wToBs x = B.pack
-  [ fromIntegral $ x `shiftR` 56 .&. 0xff
-  , fromIntegral $ x `shiftR` 48 .&. 0xff
-  , fromIntegral $ x `shiftR` 40 .&. 0xff
-  , fromIntegral $ x `shiftR` 32 .&. 0xff
-  , fromIntegral $ x `shiftR` 24 .&. 0xff
-  , fromIntegral $ x `shiftR` 16 .&. 0xff
-  , fromIntegral $ x `shiftR` 8 .&. 0xff
-  , fromIntegral $ x `shiftR` 0 .&. 0xff
+  [ fromIntegral $! x `shiftR` 56 .&. 0xff
+  , fromIntegral $! x `shiftR` 48 .&. 0xff
+  , fromIntegral $! x `shiftR` 40 .&. 0xff
+  , fromIntegral $! x `shiftR` 32 .&. 0xff
+  , fromIntegral $! x `shiftR` 24 .&. 0xff
+  , fromIntegral $! x `shiftR` 16 .&. 0xff
+  , fromIntegral $! x `shiftR` 8 .&. 0xff
+  , fromIntegral $! x `shiftR` 0 .&. 0xff
   ]
 
 toSalt :: Int32 -> Int32 -> ByteString
 toSalt x y = B.pack
-  [ fromIntegral $ x `shiftR` 24 .&. 0xff
-  , fromIntegral $ x `shiftR` 16 .&. 0xff
-  , fromIntegral $ x `shiftR`  8 .&. 0xff
-  , fromIntegral $ x `shiftR`  0 .&. 0xff
-  , fromIntegral $ y `shiftR` 24 .&. 0xff
-  , fromIntegral $ y `shiftR` 16 .&. 0xff
-  , fromIntegral $ y `shiftR`  8 .&. 0xff
-  , fromIntegral $ y `shiftR`  0 .&. 0xff
+  [ fromIntegral $! x `shiftR` 24 .&. 0xff
+  , fromIntegral $! x `shiftR` 16 .&. 0xff
+  , fromIntegral $! x `shiftR`  8 .&. 0xff
+  , fromIntegral $! x `shiftR`  0 .&. 0xff
+  , fromIntegral $! y `shiftR` 24 .&. 0xff
+  , fromIntegral $! y `shiftR` 16 .&. 0xff
+  , fromIntegral $! y `shiftR`  8 .&. 0xff
+  , fromIntegral $! y `shiftR`  0 .&. 0xff
   ]
 
 desDecrypt :: Key -> Salt -> Encrypted -> Raw
