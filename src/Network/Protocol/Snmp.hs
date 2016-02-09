@@ -103,29 +103,30 @@ module Network.Protocol.Snmp (
 , aesDecrypt
 , toSalt
 -- * exceptions
-, ClientException(..)
+, SnmpException(..)
 -- * usage example
 -- $example
 )
 where
 
-import           Data.ByteString      (ByteString)
-import qualified Data.ByteString      as B
-import qualified Data.ByteString.Lazy as BL
+import           Data.ByteString          (ByteString)
+import qualified Data.ByteString          as B
+import qualified Data.ByteString.Lazy     as BL
+
 #if MIN_VERSION_base(4,7,0)
-import Data.Bits (clearBit, setBit, shiftL, shiftR, testBit, xor, zeroBits,
-                  (.&.), (.|.))
+import           Data.Bits                (clearBit, setBit, shiftL, shiftR,
+                                           testBit, xor, zeroBits, (.&.), (.|.))
 #else
-import Control.Applicative ((*>), (<$>), (<*), (<*>))
-import Data.Bits           (Bits (..), clearBit, setBit, shiftL, shiftR,
-                            testBit, xor, (.&.), (.|.))
+import           Control.Applicative      ((*>), (<$>), (<*), (<*>))
+import           Data.Bits                (Bits (..), clearBit, setBit, shiftL,
+                                           shiftR, testBit, xor, (.&.), (.|.))
 #endif
 import           Control.Exception        (Exception, throw)
 import qualified Crypto.Cipher.AES        as Priv
 import qualified Crypto.Cipher.DES        as Priv
 import qualified Crypto.Cipher.Types      as Priv
-import qualified Crypto.Hash.MD5          as Md5
-import qualified Crypto.Hash.SHA1         as Sha
+import qualified Crypto.Error             as Priv
+import qualified Crypto.Hash              as Hash
 import qualified Crypto.MAC.HMAC          as HMAC
 import           Data.ASN1.BinaryEncoding (DER (..))
 import           Data.ASN1.Encoding       (decodeASN1', encodeASN1')
@@ -139,6 +140,7 @@ import           Data.ASN1.Types          (ASN1 (..), ASN1Class (..),
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.Binary.Put
+import qualified Data.ByteArray           as BA
 import           Data.Int
 import           Data.Monoid              ((<>))
 import           Data.Typeable            (Typeable)
@@ -205,7 +207,7 @@ data V3
 data Version = Version1
              | Version2
              | Version3
-             deriving (Eq, Show)
+             deriving (Eq, Ord, Show)
 
 type OIDS = [OID]
 
@@ -235,21 +237,21 @@ deriving instance Show (PDU a)
 deriving instance Eq (PDU a)
 
 -- | Snmp data types
-data Value = OI OID
+data Value = OI !OID
            | Zero
-           | Integer Int32
-           | String ByteString
-           | IpAddress Word8 Word8 Word8 Word8
-           | Counter32 Word32
-           | Gauge32 Word32
-           | TimeTicks Word32
-           | Opaque ByteString
-           | Counter64 Word64
+           | Integer !Int32
+           | String !ByteString
+           | IpAddress !Word8 !Word8 !Word8 !Word8
+           | Counter32 !Word32
+           | Gauge32 !Word32
+           | TimeTicks !Word32
+           | Opaque !ByteString
+           | Counter64 !Word64
            | ZeroDotZero
            | NoSuchInstance
            | NoSuchObject
            | EndOfMibView
-           deriving (Show, Eq)
+           deriving (Show, Ord, Eq)
 
 -- | Request id
 type RequestId = Int32
@@ -261,18 +263,19 @@ type ErrorStatus = Integer
 type ErrorIndex = Integer
 
 -- | requests
-data Request = GetRequest     { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | GetNextRequest { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | GetResponse    { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | SetRequest     { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | GetBulk        { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | Inform         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | V2Trap         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             | Report         { rid :: RequestId, es :: ErrorStatus, ei :: ErrorIndex }
-             deriving (Show, Eq)
+data Request = GetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | GetNextRequest { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | GetResponse    { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | SetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | GetBulk        { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | Inform         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | V2Trap         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             | Report         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+             deriving (Show, Ord, Eq)
 
 -- | Coupla oid -> value
-data Coupla = Coupla { oid :: OID, value :: Value } deriving (Eq)
+data Coupla = Coupla { oid :: !OID, value :: !Value }
+  deriving (Eq, Ord)
 
 -- | Variable bindings
 newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
@@ -280,25 +283,31 @@ newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
 -- ** Types describing header
 
 -- | (snmp2 only) Community for 2(1) version
-newtype Community = Community ByteString deriving (Show, Eq)
+newtype Community = Community ByteString
+  deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) Message Identifier (like RequestId in PDU)
-newtype ID = ID Int32 deriving (Show, Eq)
+newtype ID = ID Int32
+  deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) Message max size must be > 484
-newtype MaxSize = MaxSize Integer deriving (Show, Eq)
+newtype MaxSize = MaxSize Int
+  deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) rfc3412, type for create message flag
-data PrivAuth = NoAuthNoPriv | AuthNoPriv | AuthPriv deriving (Show, Eq)
+data PrivAuth = NoAuthNoPriv | AuthNoPriv | AuthPriv
+  deriving (Show, Eq, Ord, Enum)
 
 -- | (snmp3 only) rfc3412, as PrivAuth
 type Reportable = Bool
 
 -- | (snmp3 only) rfc3412, message flag
-data Flag = Flag Reportable PrivAuth  deriving (Show, Eq)
+data Flag = Flag Reportable PrivAuth
+  deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) rfc3412, security model
-data SecurityModel = UserBasedSecurityModel deriving (Show, Eq)
+data SecurityModel = UserBasedSecurityModel
+  deriving (Show, Eq)
 
 -- | (snmp3 only) rfc3412, security parameter
 data SecurityParameter = SecurityParameter
@@ -309,16 +318,18 @@ data SecurityParameter = SecurityParameter
   , authenticationParameters :: ByteString
   , privacyParameters        :: ByteString
   }
-  deriving (Eq)
+  deriving (Eq, Ord)
 
 -- | (snmp3 only) rfc3412, types for ScopedPDU
-newtype ContextEngineID = ContextEngineID ByteString deriving (Show, Eq)
-newtype ContextName = ContextName ByteString deriving (Show, Eq)
+newtype ContextEngineID = ContextEngineID ByteString
+  deriving (Show, Eq, Ord)
+
+newtype ContextName = ContextName ByteString
+  deriving (Show, Eq, Ord)
 
 -- | some exception
-data ClientException = TimeoutException
-                     | ServerException Integer
-                     deriving (Typeable, Eq)
+newtype SnmpException = SnmpException ErrorStatus
+    deriving (Typeable, Eq)
 
 -- | some universal getters, setters
 class HasItem a where
@@ -641,7 +652,7 @@ pduParser = do
          (6, Right (suite, _)) -> return $ PDU (Inform         rid es ei) suite
          (7, Right (suite, _)) -> return $ PDU (V2Trap         rid es ei) suite
          (8, Right (suite, _)) -> return $ PDU (Report         rid es ei) suite
-         _ -> throw $ ServerException 9
+         _ -> throw $ SnmpException 9
 
 instance ASN1Object (PDU V3) where
     toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs =
@@ -657,7 +668,7 @@ instance ASN1Object (PDU V3) where
                  End Sequence <- getNext
                  return $ ScopedPDU (ContextEngineID x) (ContextName y) p
              OctetString x -> return $ CryptedPDU x
-             _ -> throw $ ServerException 9
+             _ -> throw $ SnmpException 9
 
 instance ASN1Object Version where
     toASN1 Version1 xs = IntVal 0 : xs
@@ -669,13 +680,13 @@ instance ASN1Object Version where
              0 -> return Version1
              1 -> return Version2
              3 -> return Version3
-             _ -> throw $ ServerException 10
+             _ -> throw $ SnmpException 10
 
 instance ASN1Object Packet where
     toASN1 (V2Packet Version1 header body) _ = Start Sequence : toASN1 Version1 (toASN1 header (toASN1 body [End Sequence]))
     toASN1 (V2Packet Version2 header body) _ = Start Sequence : toASN1 Version2 (toASN1 header (toASN1 body [End Sequence]))
     toASN1 (V3Packet Version3 header body) _ = Start Sequence : toASN1 Version3 (toASN1 header (toASN1 body [End Sequence]))
-    toASN1 _ _ = throw $ ServerException 10
+    toASN1 _ _ = throw $ SnmpException 10
     fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
         v <- getObject
         case v of
@@ -715,7 +726,7 @@ instance ASN1Object Value where
       unp (Other Application 4 y) = return $ Opaque y
       unp (Other Application 6 y) = return $ Counter64 $ fI $  unpackInteger y
       unp (OID x) = return . OI $ x
-      unp _ = throw $ ServerException 9
+      unp _ = throw $ SnmpException 9
 
 instance ASN1Object Community where
     toASN1 (Community x) xs = OctetString x : xs
@@ -739,10 +750,10 @@ instance ASN1Object ID where
         return $ ID (fromIntegral x)
 
 instance ASN1Object MaxSize where
-    toASN1 (MaxSize x) xs = IntVal x : xs
+    toASN1 (MaxSize x) xs = IntVal (fromIntegral x) : xs
     fromASN1 asn = flip runParseASN1State asn $ do
         IntVal x <- getNext
-        return $ MaxSize x
+        return $ MaxSize (fromInteger x)
 
 instance ASN1Object Flag where
     toASN1 (Flag r pa) xs = let zero = zeroBits :: Word8
@@ -760,8 +771,7 @@ instance ASN1Object Flag where
                       (True, True) -> Flag (testBit w 2) AuthPriv
                       (False, False) -> Flag (testBit w 2) NoAuthNoPriv
                       (True, False) -> Flag (testBit w 2) AuthNoPriv
-                      _ -> throw $ ServerException 10
-
+                      _ -> throw $ SnmpException 10
 
 instance ASN1Object SecurityModel where
     toASN1 UserBasedSecurityModel xs = IntVal 3 : xs
@@ -769,7 +779,7 @@ instance ASN1Object SecurityModel where
         IntVal x <- getNext
         case x of
              3 -> return UserBasedSecurityModel
-             _ -> throw $ ServerException 7
+             _ -> throw $ SnmpException 7
 
 instance ASN1Object SecurityParameter where
     toASN1 SecurityParameter{..} xs = OctetString (encodeASN1' DER
@@ -785,10 +795,10 @@ instance ASN1Object SecurityParameter where
     fromASN1 asn = flip runParseASN1State asn $ do
         OctetString packed <- getNext
         let r = case decodeASN1' DER packed of
-             Left _ -> throw $ ServerException 9
+             Left _ -> throw $ SnmpException 9
              Right asn' -> parseMsgSecurityParameter asn'
         case r of
-             Left _ -> throw $ ServerException 9
+             Left _ -> throw $ SnmpException 9
              Right r' -> return r'
 
 parseMsgSecurityParameter :: [ASN1] -> Either String SecurityParameter
@@ -813,7 +823,7 @@ toP :: ByteString -> PDU V3
 toP bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
-                 _ -> throw $ ServerException 9
+                 _ -> throw $ SnmpException 9
 
 instance Binary Packet where
     put = putByteString . encodeASN1' DER . flip toASN1 []
@@ -824,7 +834,7 @@ toB :: ByteString -> Packet
 toB bs = let a = fromASN1 <$> decodeASN1' DER bs
          in case a of
                  Right (Right (r, _)) -> r
-                 _ -> throw $ ServerException 9
+                 _ -> throw $ SnmpException 9
                  --}
                  --
 instance Show Coupla where
@@ -850,31 +860,30 @@ instance ASN1Object Suite where
                return $ Coupla x v
         return $ Suite xs
 
-instance Show ClientException where
-    show TimeoutException = "Timeout exception"
-    show (ServerException 1) = "tooBig"
-    show (ServerException 2) = "noSuchName"
-    show (ServerException 3) = "badValue"
-    show (ServerException 4) = "readOnly"
-    show (ServerException 5) = "genErr"
-    show (ServerException 6) = "noAccess"
-    show (ServerException 7) = "wrongType"
-    show (ServerException 8) = "wrongLength"
-    show (ServerException 9) = "wrongEncoding"
-    show (ServerException 10) = "wrongValue"
-    show (ServerException 11) = "noCreation"
-    show (ServerException 12) = "inconsistentValue"
-    show (ServerException 13) = "resourceUnavailable"
-    show (ServerException 14) = "commitFailed"
-    show (ServerException 15) = "undoFailed"
-    show (ServerException 16) = "authorizationError"
-    show (ServerException 17) = "notWritable"
-    show (ServerException 18) = "inconsistentName"
-    show (ServerException 80) = "General IO failure occured on the set request"
-    show (ServerException 81) = "General SNMP timeout occured"
-    show (ServerException x) = "Exception " ++ show x
+instance Show SnmpException where
+    show (SnmpException 1) = "tooBig"
+    show (SnmpException 2) = "noSuchName"
+    show (SnmpException 3) = "badValue"
+    show (SnmpException 4) = "readOnly"
+    show (SnmpException 5) = "genErr"
+    show (SnmpException 6) = "noAccess"
+    show (SnmpException 7) = "wrongType"
+    show (SnmpException 8) = "wrongLength"
+    show (SnmpException 9) = "wrongEncoding"
+    show (SnmpException 10) = "wrongValue"
+    show (SnmpException 11) = "noCreation"
+    show (SnmpException 12) = "inconsistentValue"
+    show (SnmpException 13) = "resourceUnavailable"
+    show (SnmpException 14) = "commitFailed"
+    show (SnmpException 15) = "undoFailed"
+    show (SnmpException 16) = "authorizationError"
+    show (SnmpException 17) = "notWritable"
+    show (SnmpException 18) = "inconsistentName"
+    show (SnmpException 80) = "General IO failure occured on the set request"
+    show (SnmpException 81) = "General SNMP timeout occured"
+    show (SnmpException x) = "Exception " ++ show x
 
-instance Exception ClientException
+instance Exception SnmpException
 
 packInteger :: Integer -> ByteString
 packInteger i
@@ -901,24 +910,28 @@ unpackInteger bs
 cleanPass :: ByteString
 cleanPass = B.pack $ replicate 12 0x00
 
-data PrivType = DES | AES deriving (Show, Eq)
-data AuthType = MD5 | SHA deriving (Show, Eq)
+data PrivType = DES | AES deriving (Show, Ord, Eq)
+data AuthType = MD5 | SHA deriving (Show, Ord, Eq)
 type Key = ByteString
 type Password = ByteString
 
-hash :: AuthType -> ByteString -> ByteString
-hash MD5 = Md5.hash
-hash SHA = Sha.hash
+hash :: (BA.ByteArray a) => AuthType -> ByteString -> a
+hash MD5 bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.MD5)
+hash SHA bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.SHA1)
 
-hashlazy :: AuthType -> BL.ByteString -> ByteString
-hashlazy MD5 = Md5.hashlazy
-hashlazy SHA = Sha.hashlazy
+hashlazy :: (BA.ByteArray a) => AuthType -> BL.ByteString -> a
+hashlazy MD5 bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
+hashlazy SHA bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
+
+hmac :: (BA.ByteArrayAccess key, BA.ByteArray msg) => AuthType -> key -> msg -> ByteString
+hmac MD5 key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.MD5)
+hmac SHA key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.SHA1)
 
 -- | (only V3) sign Packet
 signPacket :: AuthType -> Key -> Packet -> Packet
 signPacket at key packet =
     let packetAsBin = BL.toStrict $ encode packet
-        sign = B.take 12 $ HMAC.hmac (hash at) 64 key packetAsBin
+        sign = B.take 12 $ hmac at key packetAsBin
     in setAuthenticationParametersP sign packet
 
 -- | create auth key from password and context engine id
@@ -945,9 +958,9 @@ desEncrypt privKey engineBoot localInt dataToEncrypt =
         preIV = B.drop 8 $ B.take 16 privKey
         salt = toSalt engineBoot localInt
         ivR = B.pack $ zipWith xor (B.unpack preIV) (B.unpack salt)
-        Just iv = Priv.makeIV ivR
-        Right key = Priv.makeKey desKey
-        des = Priv.cipherInit key :: Priv.DES
+        Just iv = Priv.makeIV ivR :: Maybe (Priv.IV Priv.DES)
+        -- Right key = Priv.makeKey desKey
+        Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
         tailLen = (8 - B.length dataToEncrypt `rem` 8) `rem` 8
         tailB = B.replicate tailLen 0x00
     in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
@@ -958,34 +971,34 @@ aesEncrypt :: Key -> EngineBootId -> EngineTime -> Rand64 -> Raw -> (Encrypted, 
 aesEncrypt privKey engineBoot engineTime rcounter dataToEncrypt =
     let aesKey = B.take 16 privKey
         salt = wToBs rcounter
-        Just iv = Priv.makeIV $ toSalt engineBoot engineTime <> salt
-        Right key = Priv.makeKey aesKey
-        aes = Priv.cipherInit key :: Priv.AES128
+        Just iv = Priv.makeIV $ toSalt engineBoot engineTime <> salt :: Maybe (Priv.IV Priv.AES128)
+        -- Right key = Priv.makeKey aesKey
+        Priv.CryptoPassed aes = Priv.cipherInit aesKey :: Priv.CryptoFailable Priv.AES128
     in (Priv.cfbEncrypt aes iv dataToEncrypt, salt)
 
 
 wToBs :: Int64 -> ByteString
 wToBs x = B.pack
-  [ fromIntegral $ x `shiftR` 56 .&. 0xff
-  , fromIntegral $ x `shiftR` 48 .&. 0xff
-  , fromIntegral $ x `shiftR` 40 .&. 0xff
-  , fromIntegral $ x `shiftR` 32 .&. 0xff
-  , fromIntegral $ x `shiftR` 24 .&. 0xff
-  , fromIntegral $ x `shiftR` 16 .&. 0xff
-  , fromIntegral $ x `shiftR` 8 .&. 0xff
-  , fromIntegral $ x `shiftR` 0 .&. 0xff
+  [ fromIntegral $! x `shiftR` 56 .&. 0xff
+  , fromIntegral $! x `shiftR` 48 .&. 0xff
+  , fromIntegral $! x `shiftR` 40 .&. 0xff
+  , fromIntegral $! x `shiftR` 32 .&. 0xff
+  , fromIntegral $! x `shiftR` 24 .&. 0xff
+  , fromIntegral $! x `shiftR` 16 .&. 0xff
+  , fromIntegral $! x `shiftR` 8 .&. 0xff
+  , fromIntegral $! x `shiftR` 0 .&. 0xff
   ]
 
 toSalt :: Int32 -> Int32 -> ByteString
 toSalt x y = B.pack
-  [ fromIntegral $ x `shiftR` 24 .&. 0xff
-  , fromIntegral $ x `shiftR` 16 .&. 0xff
-  , fromIntegral $ x `shiftR`  8 .&. 0xff
-  , fromIntegral $ x `shiftR`  0 .&. 0xff
-  , fromIntegral $ y `shiftR` 24 .&. 0xff
-  , fromIntegral $ y `shiftR` 16 .&. 0xff
-  , fromIntegral $ y `shiftR`  8 .&. 0xff
-  , fromIntegral $ y `shiftR`  0 .&. 0xff
+  [ fromIntegral $! x `shiftR` 24 .&. 0xff
+  , fromIntegral $! x `shiftR` 16 .&. 0xff
+  , fromIntegral $! x `shiftR`  8 .&. 0xff
+  , fromIntegral $! x `shiftR`  0 .&. 0xff
+  , fromIntegral $! y `shiftR` 24 .&. 0xff
+  , fromIntegral $! y `shiftR` 16 .&. 0xff
+  , fromIntegral $! y `shiftR`  8 .&. 0xff
+  , fromIntegral $! y `shiftR`  0 .&. 0xff
   ]
 
 desDecrypt :: Key -> Salt -> Encrypted -> Raw
@@ -994,9 +1007,9 @@ desDecrypt privKey privParameters dataToDecrypt =
         preIV = B.drop 8 $ B.take 16 privKey
         salt = privParameters
         ivR = zipWith xor (B.unpack preIV) (B.unpack salt)
-        Just iv = Priv.makeIV (B.pack ivR)
-        Right key = Priv.makeKey desKey
-        des = Priv.cipherInit key :: Priv.DES
+        Just iv = (Priv.makeIV (B.pack ivR) :: Maybe (Priv.IV Priv.DES))
+        -- Right key = Priv.makeKey desKey
+        Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
     in stripBS $ Priv.cbcDecrypt des iv dataToDecrypt
 
 aesDecrypt :: Key -> Salt -> EngineBootId -> EngineTime -> Encrypted -> Raw
@@ -1004,9 +1017,9 @@ aesDecrypt privKey privParameters engineBoot engineTime dataToDecrypt =
     let aesKey = B.take 16 privKey
         salt = privParameters
         ivR = toSalt engineBoot engineTime <> salt
-        Just iv = Priv.makeIV ivR
-        Right key = Priv.makeKey aesKey
-        aes = Priv.cipherInit key :: Priv.AES128
+        Just iv = (Priv.makeIV ivR :: Maybe (Priv.IV Priv.AES128))
+        -- Right key = Priv.makeKey aesKey
+        Priv.CryptoPassed aes = Priv.cipherInit aesKey :: Priv.CryptoFailable Priv.AES128
     in stripBS $ Priv.cfbDecrypt aes iv dataToDecrypt
 
 stripBS :: ByteString -> ByteString
@@ -1015,7 +1028,7 @@ stripBS bs =
         l1 = fromIntegral $ B.head bs'
     in if testBit l1 7
         then case clearBit l1 7 of
-                  0   -> throw $ ServerException 12
+                  0   -> throw $ SnmpException 12
                   len ->
                     let size = uintbs (B.take len (B.drop 1 bs'))
                     in B.take (size + len + 2) bs
@@ -1023,4 +1036,3 @@ stripBS bs =
     where
       {- uintbs return the unsigned int represented by the bytes -}
       uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
-
