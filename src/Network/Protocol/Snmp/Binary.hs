@@ -1,22 +1,21 @@
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 module Network.Protocol.Snmp.Binary where
 
-import           Data.Typeable            (Typeable)
-import Data.Serialize
-import Network.Protocol.Snmp ()
-import Data.Word
-import Data.ByteString (ByteString)
+import           Data.Serialize
+import           Data.Typeable   (Typeable)
+-- import Network.Protocol.Snmp ()
+import           Data.Bits
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString as B
-import GHC.Int (Int32, Int64)
-import Data.Bits
-import Debug.Trace
-import GHC.Generics
-import Data.Monoid
+import           Data.Word
+-- import           Debug.Trace
+import           GHC.Generics
+import           GHC.Int         (Int32, Int64)
 
 data Value = Integer Int32
            | BitString ByteString
@@ -35,8 +34,6 @@ data Value = Integer Int32
            | NoSuchInstance
            | EndOfMibView
            deriving (Eq, Show, Ord, Generic)
-  
-
 
 table :: [(Integer, ByteString)]
 table = zip [0 .. 10] $ map (B.drop 3 . encode) ([0 .. 10] :: [Word32])
@@ -50,7 +47,7 @@ instance Tags Value where
     tag (OctetString _) = 0x04
     tag Null = 0x05
     tag (OI _) = 0x06
-    tag (IpAddress _ _ _ _) =  0x40
+    tag IpAddress{} =  0x40
     tag (Counter32 _) = 0x41
     tag (Gauge32 _) = 0x42
     tag (TimeTicks _) = 0x43
@@ -58,7 +55,7 @@ instance Tags Value where
     tag (NsapAddress _) = 0x45
     tag (Counter64 _) = 0x46
     tag (Uinteger32 _) = 0x47
-    tag NoSuchObject = 0x80 
+    tag NoSuchObject = 0x80
     tag NoSuchInstance = 0x81
     tag EndOfMibView = 0x82
 
@@ -461,7 +458,7 @@ type Rand64 = Int64
 newtype Size = Size Int deriving (Eq, Show, Ord)
 
 instance Serialize Size where
-    put (Size i)  
+    put (Size i)
       | i >= 0 && i <= 0x7f         = mapM_ putWord8 [fromIntegral i]
       | i < 0     = error "putLength: long length is negative"
       | otherwise = mapM_ putWord8 $ lenbytes : lw
@@ -498,25 +495,36 @@ instance Serialize a => Serialize (Sequence a) where
         0x30 <- getWord8
         getNested getLength get
 
+putTag :: Value -> Put
 putTag = putWord8 . tag
 
+putIntegral :: Integral a => Value -> a -> Put
+putIntegral v a = do
+    putTag v
+    let bytes = bytesOfInt (fromIntegral a)
+        l = fromIntegral $ length bytes
+    put (Size l)
+    mapM_ putWord8 bytes
+
+putIntegralU :: Integral a => Value -> a -> Put 
+putIntegralU v a = do
+    putTag v
+    let bytes = bytesOfUInt (fromIntegral a)
+        l = fromIntegral $ length bytes
+    put (Size l)
+    mapM_ putWord8 bytes
+
+putBS :: Value -> ByteString -> Put
+putBS v bs = do
+    putTag v
+    let l = fromIntegral $ B.length bs
+    put (Size l)
+    putByteString bs
+
 instance Serialize Value where
-    put v@(Integer i) = do
-        putTag v
-        let bytes = bytesOfInt (fromIntegral i)
-            l = fromIntegral $ length bytes
-        put (Size l)
-        mapM_ putWord8 bytes
-    put v@(BitString bs) = do
-        putTag v
-        let l = fromIntegral $ B.length bs
-        put (Size l)
-        putByteString bs
-    put v@(OctetString bs) = do
-        putTag v
-        let l = fromIntegral $ B.length bs
-        put (Size l)
-        putByteString bs
+    put v@(Integer i) = putIntegral v i
+    put v@(BitString bs) = putBS v bs
+    put v@(OctetString bs) = putBS v bs
     put Null = do
         putTag Null
         putWord8 0
@@ -525,56 +533,24 @@ instance Serialize Value where
              (oid1:oid2:suboids) -> do
                  let eoidclass = fromIntegral (oid1 * 40 + oid2)
                  putTag v
-                 let bs = B.cons eoidclass $ B.concat $ map encode suboids
-                 put (Size (B.length bs)) 
+                 let bs = B.cons eoidclass $ B.concat $ map encode' suboids
+                 put (Size (B.length bs))
                  putByteString bs
+             _ -> error "put oi"
         where
-        encode x | x == 0 = B.singleton 0
+        encode' x | x == 0 = B.singleton 0
                  | otherwise = putVarEncodingIntegral x
     put v@(IpAddress a b c d) = do
         putTag v
         putWord8 4
         putWord8 a >> putWord8 b >> putWord8 c >> putWord8 d
-    put v@(Counter32 i) = do
-        putTag v
-        let bytes = bytesOfUInt (fromIntegral i)
-            l = fromIntegral $ length bytes
-        put (Size l)
-        mapM_ putWord8 bytes
-    put v@(Gauge32 i) = do
-        putTag v
-        let bytes = bytesOfUInt (fromIntegral i)
-            l = fromIntegral $ length bytes
-        put (Size l)
-        mapM_ putWord8 bytes
-    put v@(TimeTicks i) = do
-        putTag v
-        let bytes = bytesOfUInt (fromIntegral i)
-            l = fromIntegral $ length bytes
-        put (Size l)
-        mapM_ putWord8 bytes
-    put v@(Opaque bs) = do
-        putTag v
-        let l = fromIntegral $ B.length bs
-        put (Size l)
-        putByteString bs
-    put v@(NsapAddress bs) = do
-        putTag v
-        let l = fromIntegral $ B.length bs
-        put (Size l)
-        putByteString bs
-    put v@(Counter64 i) = do
-        putTag v
-        let bytes = bytesOfInt (fromIntegral i)
-            l = fromIntegral $ length bytes
-        put (Size l)
-        mapM_ putWord8 bytes
-    put v@(Uinteger32 i) = do
-        putTag v
-        let bytes = bytesOfUInt (fromIntegral i)
-            l = fromIntegral $ length bytes
-        put (Size l)
-        mapM_ putWord8 bytes
+    put v@(Counter32 i) = putIntegralU v i 
+    put v@(Gauge32 i) = putIntegralU v i
+    put v@(TimeTicks i) = putIntegralU v i
+    put v@(Opaque bs) = putBS v bs
+    put v@(NsapAddress bs) = putBS v bs
+    put v@(Counter64 i) = putIntegral v i
+    put v@(Uinteger32 i) = putIntegralU v i 
     put v@NoSuchObject = do
         putTag v
         putWord8 0
@@ -595,6 +571,7 @@ instance Serialize Value where
              0x03 -> do
                  Size l <- get
                  BitString <$> getByteString l
+             _ -> error "not implemented"
 
 
 {- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
@@ -625,7 +602,7 @@ bytesOfInt i
     | otherwise  = if testBit (head nints) 7 then nints else 0xff : nints
     where
         uints = bytesOfUInt (abs i)
-        nints = reverse $ plusOne $ reverse $ map complement $ uints
+        nints = reverse $ plusOne $ reverse $ map complement uints
         plusOne []     = [1]
         plusOne (x:xs) = if x == 0xff then 0 : plusOne xs else (x+1) : xs
 

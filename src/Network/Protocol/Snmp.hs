@@ -113,14 +113,8 @@ import           Data.ByteString          (ByteString)
 import qualified Data.ByteString          as B
 import qualified Data.ByteString.Lazy     as BL
 
-#if MIN_VERSION_base(4,7,0)
 import           Data.Bits                (clearBit, setBit, shiftL, shiftR,
                                            testBit, xor, zeroBits, (.&.), (.|.))
-#else
-import           Control.Applicative      ((*>), (<$>), (<*), (<*>))
-import           Data.Bits                (Bits (..), clearBit, setBit, shiftL,
-                                           shiftR, testBit, xor, (.&.), (.|.))
-#endif
 import           Control.Exception        (Exception, throw)
 import qualified Crypto.Cipher.AES        as Priv
 import qualified Crypto.Cipher.DES        as Priv
@@ -186,15 +180,6 @@ import           Data.Typeable            (Typeable)
 
 fI :: (Num b, Integral a) => a -> b
 fI = fromIntegral
-
-#if MIN_VERSION_base(4,7,0)
-#else
-zeroBits :: (Num a, Bits a) =>  a
-zeroBits = clearBit (bit 0) 0
-  where
-  bit :: (Bits a, Num a) => Int -> a
-  bit i = 1 `shiftL` i
-#endif
 
 -- | Phantom type for version 1 (Header V2, PDU V2)
 data V1
