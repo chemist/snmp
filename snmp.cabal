@@ -27,9 +27,23 @@ library
                        mtl,
                        containers,
                        binary,
+                       cereal,
                        cryptonite,
                        memory
   hs-source-dirs:      src
   ghc-options: -Wall -O2
   ghc-prof-options: -fprof-auto -fprof-cafs
   default-language:    Haskell2010
+
+test-suite tests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests
+  main-is: Main.hs
+  ghc-options: -Wall -rtsopts -fno-warn-missing-signatures -fno-enable-rewrite-rules
+  build-depends:  base >=4.6 && <5,
+                  snmp,
+                  QuickCheck,
+                  test-framework,
+                  test-framework-quickcheck2
+         
