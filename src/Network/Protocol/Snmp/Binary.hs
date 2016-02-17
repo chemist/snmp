@@ -64,6 +64,16 @@ instance Tags Value where
     tag NoSuchInstance = 0x81
     tag EndOfMibView = 0x82
 
+instance Tags Request where
+    tag GetRequest{} = 0xa0
+    tag GetNextRequest{} = 0xa1
+    tag GetResponse{} = 0xa2
+    tag SetRequest{} = 0xa3
+    tag GetBulk{} = 0xa5
+    tag Inform{} = 0xa6
+    tag V2Trap{} = 0xa7
+    tag Report{} = 0xa8
+
 -- | Phantom type for version 1 (Header V2, PDU V2)
 data V1
 -- | Phantom type for version 2 (Header V2, PDU V2)
@@ -103,13 +113,13 @@ deriving instance Show (PDU a)
 deriving instance Eq (PDU a)
 
 -- | Request id
-type RequestId = Int32
+newtype RequestId = RequestId Int32 deriving (Show, Eq, Ord)
 
 -- | Error status
-type ErrorStatus = Integer
+newtype ErrorStatus = ErrorStatus Integer deriving (Show, Eq, Ord)
 
 -- | Error index
-type ErrorIndex = Integer
+newtype ErrorIndex = ErrorIndex Integer deriving (Show, Eq, Ord)
 
 -- | requests
 data Request = GetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
@@ -181,27 +191,27 @@ newtype SnmpException = SnmpException ErrorStatus
     deriving (Typeable, Eq)
 
 instance Show SnmpException where
-    show (SnmpException 1) = "tooBig"
-    show (SnmpException 2) = "noSuchName"
-    show (SnmpException 3) = "badValue"
-    show (SnmpException 4) = "readOnly"
-    show (SnmpException 5) = "genErr"
-    show (SnmpException 6) = "noAccess"
-    show (SnmpException 7) = "wrongType"
-    show (SnmpException 8) = "wrongLength"
-    show (SnmpException 9) = "wrongEncoding"
-    show (SnmpException 10) = "wrongValue"
-    show (SnmpException 11) = "noCreation"
-    show (SnmpException 12) = "inconsistentValue"
-    show (SnmpException 13) = "resourceUnavailable"
-    show (SnmpException 14) = "commitFailed"
-    show (SnmpException 15) = "undoFailed"
-    show (SnmpException 16) = "authorizationError"
-    show (SnmpException 17) = "notWritable"
-    show (SnmpException 18) = "inconsistentName"
-    show (SnmpException 80) = "General IO failure occured on the set request"
-    show (SnmpException 81) = "General SNMP timeout occured"
-    show (SnmpException x) = "Exception " ++ show x
+    show (SnmpException (ErrorStatus 1)) = "tooBig"
+    show (SnmpException (ErrorStatus 2)) = "noSuchName"
+    show (SnmpException (ErrorStatus 3)) = "badValue"
+    show (SnmpException (ErrorStatus 4)) = "readOnly"
+    show (SnmpException (ErrorStatus 5)) = "genErr"
+    show (SnmpException (ErrorStatus 6)) = "noAccess"
+    show (SnmpException (ErrorStatus 7)) = "wrongType"
+    show (SnmpException (ErrorStatus 8)) = "wrongLength"
+    show (SnmpException (ErrorStatus 9)) = "wrongEncoding"
+    show (SnmpException (ErrorStatus 10)) = "wrongValue"
+    show (SnmpException (ErrorStatus 11)) = "noCreation"
+    show (SnmpException (ErrorStatus 12)) = "inconsistentValue"
+    show (SnmpException (ErrorStatus 13)) = "resourceUnavailable"
+    show (SnmpException (ErrorStatus 14)) = "commitFailed"
+    show (SnmpException (ErrorStatus 15)) = "undoFailed"
+    show (SnmpException (ErrorStatus 16)) = "authorizationError"
+    show (SnmpException (ErrorStatus 17)) = "notWritable"
+    show (SnmpException (ErrorStatus 18)) = "inconsistentName"
+    show (SnmpException (ErrorStatus 80)) = "General IO failure occured on the set request"
+    show (SnmpException (ErrorStatus 81)) = "General SNMP timeout occured"
+    show (SnmpException (ErrorStatus x)) = "Exception " ++ show x
 
 -- | some universal getters, setters
 class HasItem a where
@@ -273,7 +283,7 @@ instance Construct Suite where
     initial = Suite []
 
 instance Construct Request where
-     initial = GetRequest 0 0 0
+     initial = GetRequest (RequestId 0) (ErrorStatus 0) (ErrorIndex 0)
 ----------------------------------------------------------------------------------------
 instance HasItem V2 where
     getHeader (V2Packet _ x _) = x
@@ -799,4 +809,60 @@ instance Serialize (Header V3) where
         return $ V3Header iD maxSize flag securityModel securityParameter
         where
         getHeader' = (,,,) <$> get <*> get <*> get <*> get
+
+instance Serialize RequestId where
+    put (RequestId rid) = put (Integer $ fromIntegral rid)
+    get = do
+        Integer i <- get
+        return $ RequestId $ fromIntegral i
+
+instance Serialize ErrorStatus where
+    put (ErrorStatus es) = put (Integer $ fromIntegral es)
+    get = do
+        Integer i <- get
+        return $ ErrorStatus $ fromIntegral i
+
+instance Serialize ErrorIndex where
+    put (ErrorIndex ei) = put (Integer $ fromIntegral ei)
+    get = do
+        Integer i <- get
+        return $ ErrorIndex $ fromIntegral i
+
+instance Serialize Suite where
+    put (Suite bs) = putWord8 0x30 >> putNested putLength (mapM_ put bs)
+    get = do
+        getTag 0x30 9
+        Suite <$> getNested getLength (getSuite' [])
+        where
+        getSuite' xs = do
+            check <- isEmpty
+            if check 
+               then return xs
+               else do
+                   coupla <- get
+                   getSuite' (coupla : xs)
+
+instance Serialize Coupla where
+    put Coupla{..} = putWord8 0x30 >> putNested putLength (put oid >> put value)
+    get = do
+        getTag 0x30 9
+        getNested getLength (Coupla <$> get <*> get)
+
+instance Serialize (PDU V2) where
+    put (PDU request suite) = do
+        putWord8 (tag request)
+        putNested putLength (put (rid request) >> put (es request) >> put (ei request) >> put suite)
+    get = do
+        t <- getWord8
+        let request = case t of
+                           0xa0 -> GetRequest 
+                           0xa1 -> GetNextRequest 
+                           0xa2 -> GetResponse
+                           0xa3 -> SetRequest 
+                           0xa5 -> GetBulk
+                           0xa6 -> Inform
+                           0xa7 -> V2Trap
+                           0xa8 -> Report
+                           _ -> error "9"
+        getNested getLength (PDU <$> (request <$> get <*> get <*> get) <*> get)
 
