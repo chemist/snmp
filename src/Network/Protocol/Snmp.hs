@@ -1,18 +1,14 @@
-{-# LANGUAGE CPP                        #-}
-{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
-module Network.Protocol.Snmp (
+module Network.Protocol.Snmp.Binary (
 -- * snmp types
   Value(..)
-, OID
-, OIDS
 -- * top level types
-, V1
 , V2
 , V3
 , Version(..)
@@ -109,80 +105,78 @@ module Network.Protocol.Snmp (
 )
 where
 
-import           Data.ByteString          (ByteString)
-import qualified Data.ByteString          as B
-import qualified Data.ByteString.Lazy     as BL
+import           Data.Serialize
+import           Data.Typeable        (Typeable)
+import           Control.Exception    (Exception, throw)
+import           Data.Bits
+import           Data.ByteString      (ByteString)
+import qualified Data.ByteString      as B
+import           Data.Word
+import           Control.Monad
+import qualified Crypto.Cipher.AES    as Priv
+import qualified Crypto.Cipher.DES    as Priv
+import qualified Crypto.Cipher.Types  as Priv
+import qualified Crypto.Error         as Priv
+import qualified Crypto.Hash          as Hash
+import qualified Crypto.MAC.HMAC      as HMAC
+import qualified Data.ByteArray       as BA
+import qualified Data.ByteString.Lazy as BL
+import           Data.List            (unfoldr)
+import           Data.Monoid          ((<>))
+import           GHC.Generics         (Generic)
+import           GHC.Int              (Int32, Int64)
 
-import           Data.Bits                (clearBit, setBit, shiftL, shiftR,
-                                           testBit, xor, zeroBits, (.&.), (.|.))
-import           Control.Exception        (Exception, throw)
-import qualified Crypto.Cipher.AES        as Priv
-import qualified Crypto.Cipher.DES        as Priv
-import qualified Crypto.Cipher.Types      as Priv
-import qualified Crypto.Error             as Priv
-import qualified Crypto.Hash              as Hash
-import qualified Crypto.MAC.HMAC          as HMAC
-import           Data.ASN1.BinaryEncoding (DER (..))
-import           Data.ASN1.Encoding       (decodeASN1', encodeASN1')
-import           Data.ASN1.Parse          (ParseASN1, getMany, getNext,
-                                           getNextContainer, getObject,
-                                           onNextContainer, runParseASN1,
-                                           runParseASN1State)
-import           Data.ASN1.Types          (ASN1 (..), ASN1Class (..),
-                                           ASN1ConstructionType (..),
-                                           ASN1Object (..), OID)
-import           Data.Binary
-import           Data.Binary.Get
-import           Data.Binary.Put
-import qualified Data.ByteArray           as BA
-import           Data.Int
-import           Data.Monoid              ((<>))
-import           Data.Typeable            (Typeable)
+data Value = Integer Int32
+           | BitString ByteString
+           | OctetString ByteString
+           | Null
+           | OI [Word16]
+           | IpAddress Word8 Word8 Word8 Word8
+           | Counter32 Word32
+           | Gauge32 Word32
+           | TimeTicks Word32
+           | Opaque ByteString
+           | NsapAddress ByteString
+           | Counter64 Word64
+           | Uinteger32 Int32
+           | NoSuchObject
+           | NoSuchInstance
+           | EndOfMibView
+           deriving (Eq, Show, Ord, Generic)
 
--- $example
---
--- Here example for snmpV2
---
--- @
--- import Network.Protocol.Snmp
--- import Control.Applicative
--- import Network.Socket.ByteString (recv, sendAll)
--- import Network.Socket hiding (recv, sendAll)
---
--- -- create new empty packet
--- v2 :: Packet
--- v2 = initial Version2
---
--- community = Community "hello"
---
--- oi = Coupla [1,3,6,1,2,1,1,4,0] Zero
---
--- -- set community, oid
--- packet :: Community -> Coupla -> Packet
--- packet community oi =
---   setCommunityP community . setSuite (Suite [oi]) $ v2
---
--- -- here must be code for create udp socket
--- makeSocket :: Hostname -> Port -> IO Socket
--- makeSocket = undefined
---
--- main :: IO ()
--- main = do
---    socket <- makeSocket "localhost" "161"
---    sendAll socket $ encode $ setRequest (GetRequest 1 0 0) packet
---    result <- decode <$\> recv socket 1500 :: IO Packet
---    print $ getSuite result
---
--- @
---
+type Tag = Word8
 
------------------------------------------------------------------------------------------------------------------
+class Tags a where
+    tag :: a -> Tag
 
-fI :: (Num b, Integral a) => a -> b
-fI = fromIntegral
+instance Tags Value where
+    tag (Integer _) = 0x02
+    tag (BitString _) = 0x03
+    tag (OctetString _) = 0x04
+    tag Null = 0x05
+    tag (OI _) = 0x06
+    tag IpAddress{} =  0x40
+    tag (Counter32 _) = 0x41
+    tag (Gauge32 _) = 0x42
+    tag (TimeTicks _) = 0x43
+    tag (Opaque _) = 0x44
+    tag (NsapAddress _) = 0x45
+    tag (Counter64 _) = 0x46
+    tag (Uinteger32 _) = 0x47
+    tag NoSuchObject = 0x80
+    tag NoSuchInstance = 0x81
+    tag EndOfMibView = 0x82
 
--- | Phantom type for version 1 (Header V2, PDU V2)
-data V1
+instance Tags Request where
+    tag GetRequest{} = 0xa0
+    tag GetNextRequest{} = 0xa1
+    tag GetResponse{} = 0xa2
+    tag SetRequest{} = 0xa3
+    tag GetBulk{} = 0xa5
+    tag Inform{} = 0xa6
+    tag V2Trap{} = 0xa7
+    tag Report{} = 0xa8
+
 -- | Phantom type for version 2 (Header V2, PDU V2)
 data V2
 -- | Phantom type for version 3 (Header V3, PDU V3)
@@ -193,8 +187,6 @@ data Version = Version1
              | Version2
              | Version3
              deriving (Eq, Ord, Show)
-
-type OIDS = [OID]
 
 -- | Top level type, which describe snmp packet
 data Packet where
@@ -221,31 +213,14 @@ data PDU a where
 deriving instance Show (PDU a)
 deriving instance Eq (PDU a)
 
--- | Snmp data types
-data Value = OI !OID
-           | Zero
-           | Integer !Int32
-           | String !ByteString
-           | IpAddress !Word8 !Word8 !Word8 !Word8
-           | Counter32 !Word32
-           | Gauge32 !Word32
-           | TimeTicks !Word32
-           | Opaque !ByteString
-           | Counter64 !Word64
-           | ZeroDotZero
-           | NoSuchInstance
-           | NoSuchObject
-           | EndOfMibView
-           deriving (Show, Ord, Eq)
-
 -- | Request id
-type RequestId = Int32
+newtype RequestId = RequestId Int32 deriving (Show, Eq, Ord)
 
 -- | Error status
-type ErrorStatus = Integer
+newtype ErrorStatus = ErrorStatus Integer deriving (Show, Eq, Ord)
 
 -- | Error index
-type ErrorIndex = Integer
+newtype ErrorIndex = ErrorIndex Integer deriving (Show, Eq, Ord)
 
 -- | requests
 data Request = GetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
@@ -259,11 +234,11 @@ data Request = GetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !Er
              deriving (Show, Ord, Eq)
 
 -- | Coupla oid -> value
-data Coupla = Coupla { oid :: !OID, value :: !Value }
-  deriving (Eq, Ord)
+data Coupla = Coupla { oid :: !Value, value :: !Value }
+  deriving (Eq, Ord, Show)
 
 -- | Variable bindings
-newtype Suite = Suite [Coupla] deriving (Eq, Monoid)
+newtype Suite = Suite [Coupla] deriving (Eq, Monoid, Show)
 
 -- ** Types describing header
 
@@ -303,7 +278,7 @@ data SecurityParameter = SecurityParameter
   , authenticationParameters :: ByteString
   , privacyParameters        :: ByteString
   }
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Show)
 
 -- | (snmp3 only) rfc3412, types for ScopedPDU
 newtype ContextEngineID = ContextEngineID ByteString
@@ -315,6 +290,31 @@ newtype ContextName = ContextName ByteString
 -- | some exception
 newtype SnmpException = SnmpException ErrorStatus
     deriving (Typeable, Eq)
+
+instance Exception SnmpException
+
+instance Show SnmpException where
+    show (SnmpException (ErrorStatus 1)) = "tooBig"
+    show (SnmpException (ErrorStatus 2)) = "noSuchName"
+    show (SnmpException (ErrorStatus 3)) = "badValue"
+    show (SnmpException (ErrorStatus 4)) = "readOnly"
+    show (SnmpException (ErrorStatus 5)) = "genErr"
+    show (SnmpException (ErrorStatus 6)) = "noAccess"
+    show (SnmpException (ErrorStatus 7)) = "wrongType"
+    show (SnmpException (ErrorStatus 8)) = "wrongLength"
+    show (SnmpException (ErrorStatus 9)) = "wrongEncoding"
+    show (SnmpException (ErrorStatus 10)) = "wrongValue"
+    show (SnmpException (ErrorStatus 11)) = "noCreation"
+    show (SnmpException (ErrorStatus 12)) = "inconsistentValue"
+    show (SnmpException (ErrorStatus 13)) = "resourceUnavailable"
+    show (SnmpException (ErrorStatus 14)) = "commitFailed"
+    show (SnmpException (ErrorStatus 15)) = "undoFailed"
+    show (SnmpException (ErrorStatus 16)) = "authorizationError"
+    show (SnmpException (ErrorStatus 17)) = "notWritable"
+    show (SnmpException (ErrorStatus 18)) = "inconsistentName"
+    show (SnmpException (ErrorStatus 80)) = "General IO failure occured on the set request"
+    show (SnmpException (ErrorStatus 81)) = "General SNMP timeout occured"
+    show (SnmpException (ErrorStatus x)) = "Exception " ++ show x
 
 -- | some universal getters, setters
 class HasItem a where
@@ -386,7 +386,7 @@ instance Construct Suite where
     initial = Suite []
 
 instance Construct Request where
-     initial = GetRequest 0 0 0
+     initial = GetRequest (RequestId 0) (ErrorStatus 0) (ErrorIndex 0)
 ----------------------------------------------------------------------------------------
 instance HasItem V2 where
     getHeader (V2Packet _ x _) = x
@@ -587,310 +587,409 @@ setRequest req (V3Packet v h (ScopedPDU a b (PDU _ s))) = V3Packet v h (ScopedPD
 setRequest _ _ = undefined
 ----------------------------------------------------------------------------------------
 
-instance ASN1Object (Header V2) where
-    toASN1 (V2Header c) = toASN1 c
-    fromASN1 asn = flip runParseASN1State asn $ V2Header <$> getObject
+newtype Size = Size Int deriving (Eq, Show, Ord)
 
-sS :: ParseASN1 ()
-sS = do
-    Start Sequence <- getNext
-    return ()
+instance Serialize Size where
+    put (Size i)
+      | i >= 0 && i <= 0x7f         = mapM_ putWord8 [fromIntegral i]
+      | i < 0     = error "8"
+      | otherwise = mapM_ putWord8 $ lenbytes : lw
+      where
+      lw       = bytesOfUInt $ fromIntegral i
+      lenbytes = fromIntegral (length lw .|. 0x80)
+    get = do
+      l1 <- fromIntegral <$> getWord8
+      if testBit l1 7
+         then case clearBit l1 7 of
+                   0   -> return $ Size 0
+                   len -> do
+                       lw <- getBytes len
+                       return $ Size $ uintbs lw
+         else
+             return $ Size l1
+      where
+      {- uintbs return the unsigned int represented by the bytes -}
+      uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
 
-eS :: ParseASN1 ()
-eS = do
-    End Sequence <- getNext
-    return ()
+putLength :: Putter Int
+putLength x = put (Size x)
 
-instance ASN1Object (Header V3) where
-    toASN1 (V3Header i ms f sm sp) xs =
-        Start Sequence : toASN1 i (toASN1 ms (toASN1 f (toASN1 sm [End Sequence]))) ++ toASN1 sp xs
-    fromASN1 asn = flip runParseASN1State asn $
-        V3Header <$> (sS *> getObject) <*> getObject <*> getObject <*> (getObject <* eS) <*> getObject
+getLength :: Get Int
+getLength = do
+    Size i <- get
+    return i
 
-instance ASN1Object (PDU V2) where
-    toASN1 (PDU (GetRequest rid _ _    ) sd) xs = (Start $ Container Context 0):IntVal (fromIntegral rid) : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 0)] ++ xs
-    toASN1 (PDU (GetNextRequest rid _ _) sd) xs = (Start $ Container Context 1):IntVal (fromIntegral rid) : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 1)] ++ xs
-    toASN1 (PDU (GetResponse rid es ei ) sd) xs = (Start $ Container Context 2):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 2)] ++ xs
-    toASN1 (PDU (SetRequest rid _ _    ) sd) xs = (Start $ Container Context 3):IntVal (fromIntegral rid) : IntVal 0  : IntVal 0 : Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 3)] ++ xs
-    toASN1 (PDU (GetBulk rid es ei     ) sd) xs = (Start $ Container Context 5):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
-    toASN1 (PDU (Inform rid es ei     ) sd) xs = (Start $ Container Context 6):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
-    toASN1 (PDU (V2Trap rid es ei     ) sd) xs = (Start $ Container Context 7):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 4)] ++ xs
-    toASN1 (PDU (Report rid es ei      ) sd) xs = (Start $ Container Context 8):IntVal (fromIntegral rid) : IntVal es : IntVal ei: Start Sequence : toASN1 sd [] ++ [ End Sequence, End (Container Context 8)] ++ xs
-    fromASN1 asn = runParseASN1State pduParser asn
+putTag :: Tags a => a -> Put
+putTag = putWord8 . tag
 
-pduParser :: ParseASN1 (PDU V2)
-pduParser = do
-    Start (Container Context n) <- getNext
-    IntVal rid' <- getNext
-    IntVal es <- getNext
-    IntVal ei <- getNext
-    x <- getNextContainer Sequence
-    End (Container Context _) <- getNext
-    let psuite = fromASN1 x
-        rid = fromIntegral rid'
-    case (n, psuite) of
-         (0, Right (suite, _)) -> return $ PDU (GetRequest     rid es ei) suite
-         (1, Right (suite, _)) -> return $ PDU (GetNextRequest rid es ei) suite
-         (2, Right (suite, _)) -> return $ PDU (GetResponse    rid es ei) suite
-         (3, Right (suite, _)) -> return $ PDU (SetRequest     rid es ei) suite
-         (5, Right (suite, _)) -> return $ PDU (GetBulk        rid es ei) suite
-         (6, Right (suite, _)) -> return $ PDU (Inform         rid es ei) suite
-         (7, Right (suite, _)) -> return $ PDU (V2Trap         rid es ei) suite
-         (8, Right (suite, _)) -> return $ PDU (Report         rid es ei) suite
-         _ -> throw $ SnmpException 9
+type ErrorCode = Int
 
-instance ASN1Object (PDU V3) where
-    toASN1 (ScopedPDU (ContextEngineID x) (ContextName y) pdu) xs =
-      [Start Sequence, OctetString x, OctetString y] ++ toASN1 pdu (End Sequence :xs)
-    toASN1 (CryptedPDU cryptedBody) xs = OctetString cryptedBody : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        whatIs <- getNext
-        case whatIs of
-             Start Sequence -> do
-                 OctetString x <- getNext
-                 OctetString y <- getNext
-                 p <- pduParser
-                 End Sequence <- getNext
-                 return $ ScopedPDU (ContextEngineID x) (ContextName y) p
-             OctetString x -> return $ CryptedPDU x
-             _ -> throw $ SnmpException 9
+getTag :: Tag -> ErrorCode -> Get ()
+getTag x e = do
+    t <- getWord8
+    if t /= x
+       then error $ show e
+       else return ()
 
-instance ASN1Object Version where
-    toASN1 Version1 xs = IntVal 0 : xs
-    toASN1 Version2 xs = IntVal 1 : xs
-    toASN1 Version3 xs = IntVal 3 : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        IntVal x <- getNext
+putIntegral :: (Tags b, Integral a) => b -> a -> Put
+putIntegral v a = do
+    putTag v
+    let bytes = bytesOfInt (fromIntegral a)
+        l = fromIntegral $ length bytes
+    put (Size l)
+    mapM_ putWord8 bytes
+
+putIntegralU :: (Tags b, Integral a) => b -> a -> Put
+putIntegralU v a = do
+    putTag v
+    let bytes = bytesOfUInt (fromIntegral a)
+        l = fromIntegral $ length bytes
+    put (Size l)
+    mapM_ putWord8 bytes
+
+putBS :: Value -> ByteString -> Put
+putBS v bs = do
+    putTag v
+    let l = fromIntegral $ B.length bs
+    put (Size l)
+    putByteString bs
+
+instance Serialize Value where
+    put v@(Integer i) = putIntegral v i
+    put v@(BitString bs) = putBS v bs
+    put v@(OctetString bs) = putBS v bs
+    put Null = do
+        putTag Null
+        putWord8 0
+    put v@(OI oids) =
+        case oids of
+             (oid1:oid2:suboids) -> do
+                 let eoidclass = fromIntegral (oid1 * 40 + oid2)
+                 putTag v
+                 let bs = B.cons eoidclass $ B.concat $ map encode' suboids
+                 put (Size (B.length bs))
+                 putByteString bs
+             _ -> error "put oi"
+        where
+        encode' x | x == 0 = B.singleton 0
+                 | otherwise = putVarEncodingIntegral x
+    put v@(IpAddress a b c d) = do
+        putTag v
+        putWord8 4
+        putWord8 a >> putWord8 b >> putWord8 c >> putWord8 d
+    put v@(Counter32 i) = putIntegralU v i
+    put v@(Gauge32 i) = putIntegralU v i
+    put v@(TimeTicks i) = putIntegralU v i
+    put v@(Opaque bs) = putBS v bs
+    put v@(NsapAddress bs) = putBS v bs
+    put v@(Counter64 i) = putIntegral v i
+    put v@(Uinteger32 i) = putIntegralU v i
+    put v@NoSuchObject = do
+        putTag v
+        putWord8 0
+    put v@NoSuchInstance = do
+        putTag v
+        putWord8 0
+    put v@EndOfMibView = do
+        putTag v
+        putWord8 0
+    get = do
+        t <- getWord8
+        case t of
+             0x02 -> do
+                 Size l <- get
+                 Integer . fromIntegral . snd . intOfBytes <$> getBytes (fromIntegral l)
+             0x03 -> do
+                 Size l <- get
+                 BitString <$> getByteString l
+             0x04 -> do
+                 Size l <- get
+                 OctetString <$> getByteString l
+             0x05 -> do
+                 Size _ <- get
+                 0 <- getWord8
+                 return Null
+             0x06 -> do
+                 Size l <- get
+                 bs <- getByteString (fromIntegral l)
+                 let (x:xs) = B.unpack bs
+                     groupOID :: [Word8] -> [Word16]
+                     groupOID = map (foldl (\acc n -> (acc `shiftL` 7) + fromIntegral n) 0) . groupSubOID
+                     groupSubOIDHelper [] = Nothing
+                     groupSubOIDHelper s = Just $ spanSubOIDbound s
+                     groupSubOID :: [Word8] -> [[Word8]]
+                     groupSubOID = unfoldr groupSubOIDHelper
+                     spanSubOIDbound [] = ([], [])
+                     spanSubOIDbound (a:as) = if testBit a 7 then (clearBit a 7 : ys, zs) else ([a], as)
+                       where (ys, zs) = spanSubOIDbound as
+                 return $ OI (fromIntegral (x `div` 40) : fromIntegral (x `mod` 40) : groupOID xs)
+             0x40 -> do
+                 Size _ <- get
+                 IpAddress <$> getWord8 <*> getWord8 <*> getWord8 <*> getWord8
+             0x41 -> do
+                 Size l <- get
+                 Counter32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x42 -> do
+                 Size l <- get
+                 Gauge32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x43 -> do
+                 Size l <- get
+                 TimeTicks . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x44 -> do
+                 Size l <- get
+                 Opaque <$> getByteString (fromIntegral l)
+             0x45 -> do
+                 Size l <- get
+                 NsapAddress <$> getByteString (fromIntegral l)
+             0x46 -> do
+                 Size l <- get
+                 Counter64 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x47 -> do
+                 Size l <- get
+                 Uinteger32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x80 -> void getWord8 *> return NoSuchObject
+             0x81 -> void getWord8 *> return NoSuchInstance
+             0x82 -> void getWord8 *> return EndOfMibView
+             _ -> error "9"
+
+
+{- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
+uintOfBytes :: ByteString -> (Int, Integer)
+uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0 b)
+
+--bytesOfUInt i = B.unfoldr (\x -> if x == 0 then Nothing else Just (fromIntegral (x .&. 0xff), x `shiftR` 8)) i
+bytesOfUInt :: Integer -> [Word8]
+bytesOfUInt x = reverse (list x)
+    where list i = if i <= 0xff then [fromIntegral i] else (fromIntegral i .&. 0xff) : list (i `shiftR` 8)
+
+{- | intOfBytes returns the number of bytes in the list and
+   the represented integer by a two's completement list of bytes -}
+intOfBytes :: ByteString -> (Int, Integer)
+intOfBytes b
+    | B.length b == 0   = (0, 0)
+    | otherwise         = (len, if isNeg then -(maxIntLen - v + 1) else v)
+    where
+        (len, v)  = uintOfBytes b
+        maxIntLen = 2 ^ (8 * len) - 1
+        isNeg     = testBit (B.head b) 7
+
+{- | bytesOfInt convert an integer into a two's completemented list of bytes -}
+bytesOfInt :: Integer -> [Word8]
+bytesOfInt i
+    | i > 0      = if testBit (head uints) 7 then 0 : uints else uints
+    | i == 0     = [0]
+    | otherwise  = if testBit (head nints) 7 then nints else 0xff : nints
+    where
+        uints = bytesOfUInt (abs i)
+        nints = reverse $ plusOne $ reverse $ map complement uints
+        plusOne []     = [1]
+        plusOne (x:xs) = if x == 0xff then 0 : plusOne xs else (x+1) : xs
+
+putVarEncodingIntegral :: (Bits i, Integral i) => i -> ByteString
+putVarEncodingIntegral i = B.reverse $ B.unfoldr genOctets (i,True)
+    where genOctets (x,first)
+            | x > 0     =
+                let out = fromIntegral (x .&. 0x7F) .|. (if first then 0 else 0x80) in
+                Just (out, (shiftR x 7, False))
+            | otherwise = Nothing
+
+instance Serialize Version where
+    put Version1 = put (Integer 0)
+    put Version2 = put (Integer 1)
+    put Version3 = put (Integer 3)
+    get = do
+        Integer x <- get
         case x of
              0 -> return Version1
              1 -> return Version2
              3 -> return Version3
-             _ -> throw $ SnmpException 10
+             _ -> error "10"
 
-instance ASN1Object Packet where
-    toASN1 (V2Packet Version1 header body) _ = Start Sequence : toASN1 Version1 (toASN1 header (toASN1 body [End Sequence]))
-    toASN1 (V2Packet Version2 header body) _ = Start Sequence : toASN1 Version2 (toASN1 header (toASN1 body [End Sequence]))
-    toASN1 (V3Packet Version3 header body) _ = Start Sequence : toASN1 Version3 (toASN1 header (toASN1 body [End Sequence]))
-    toASN1 _ _ = throw $ SnmpException 10
-    fromASN1 asn = flip runParseASN1State asn $ onNextContainer Sequence $ do
-        v <- getObject
-        case v of
-             Version1 -> V2Packet Version1 <$> getObject <*> getObject
-             Version2 -> V2Packet Version2 <$> getObject <*> getObject
-             Version3 -> V3Packet Version3 <$> getObject <*> getObject
+instance Serialize Community where
+    put (Community bs) = put (OctetString bs)
+    get = do
+        OctetString bs <- get
+        return (Community bs)
 
-instance ASN1Object Value where
-    toASN1 NoSuchObject xs = Other Context 0 "" : xs
-    toASN1 NoSuchInstance xs = Other Context 1 "" : xs
-    toASN1 EndOfMibView xs = Other Context 2 "" : xs
-    toASN1 (OI x) xs = OID x : xs
-    toASN1 Zero xs = Null : xs
-    toASN1 ZeroDotZero xs = OID [0,0] : xs
-    toASN1 (Integer x) xs = IntVal (fI x) : xs
-    toASN1 (String x) xs = OctetString x : xs
-    toASN1 (IpAddress a1 a2 a3 a4) xs = Other Application 0 (B.pack [a1, a2, a3, a4]) : xs
-    toASN1 (Counter32 x) xs = Other Application 1 (packInteger (fI x)) : xs
-    toASN1 (Gauge32 x) xs = Other Application 2 (packInteger (fI x)) : xs
-    toASN1 (TimeTicks x) xs = Other Application 3 (packInteger (fI x)) : xs
-    toASN1 (Opaque x) xs = Other Application 4 x : xs
-    toASN1 (Counter64 x) xs = Other Application 6 (packInteger (fI x)) : xs
-    fromASN1 asn = runParseASN1State (unp =<< getNext) asn
-      where
-      unp (Other Context 0 "") = return NoSuchObject
-      unp (Other Context 1 "") = return NoSuchInstance
-      unp (Other Context 2 "") = return EndOfMibView
-      unp Null = return Zero
-      unp (OID [0,0]) = return ZeroDotZero
-      unp (IntVal x) = return $ Integer (fI x)
-      unp (OctetString x) = return $ String x
-      unp (Other Application 0 y) = let [a1, a2, a3, a4] = B.unpack y
-                                    in return $ IpAddress a1 a2 a3 a4
-      unp (Other Application 1 y) = return $ Counter32 $ fI $  unpackInteger y
-      unp (Other Application 2 y) = return $ Gauge32 $ fI $  unpackInteger y
-      unp (Other Application 3 y) = return $ TimeTicks $ fI $  unpackInteger y
-      unp (Other Application 4 y) = return $ Opaque y
-      unp (Other Application 6 y) = return $ Counter64 $ fI $  unpackInteger y
-      unp (OID x) = return . OI $ x
-      unp _ = throw $ SnmpException 9
+instance Serialize (Header V2) where
+    put (V2Header c) = put c
+    get = do
+        c <- get
+        return $ V2Header c
 
-instance ASN1Object Community where
-    toASN1 (Community x) xs = OctetString x : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        OctetString x <- getNext
-        return $ Community x
-
-instance Show SecurityParameter where
-    show msg = "SecurityParameter:\n\t\tAuthoritiveEngineId: "
-       ++ show (authoritiveEngineId msg )
-       ++ "\n\t\tAuthoritiveEngineBoots: " ++ show (authoritiveEngineBoots msg )
-       ++ "\n\t\tAuthoritiveEngineTime: " ++ show (authoritiveEngineTime msg )
-       ++ "\n\t\tUserName: " ++ show (userName msg )
-       ++ "\n\t\tAuthenticationParameters: " ++ show (authenticationParameters msg )
-       ++ "\n\t\tPrivacyParameters: " ++ show (privacyParameters msg )
-
-instance ASN1Object ID where
-    toASN1 (ID x) xs = IntVal (fromIntegral x) : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        IntVal x <- getNext
-        return $ ID (fromIntegral x)
-
-instance ASN1Object MaxSize where
-    toASN1 (MaxSize x) xs = IntVal (fromIntegral x) : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        IntVal x <- getNext
-        return $ MaxSize (fromInteger x)
-
-instance ASN1Object Flag where
-    toASN1 (Flag r pa) xs = let zero = zeroBits :: Word8
-                                reportable = if r then setBit zero 0 else zero
-                                privauth = case pa of
-                                                NoAuthNoPriv -> zero
-                                                AuthNoPriv -> setBit zero 2
-                                                AuthPriv -> setBit zero 1 .|. setBit zero 2
-                                flag = reportable .|. privauth
-                            in OctetString (B.pack [flag]) : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        OctetString x <- getNext
-        let [w] = B.unpack x
+instance Serialize ID where
+    put (ID x) = put (Integer x)
+    get = do
+        Integer x <- get
+        return $ ID x
+instance Serialize MaxSize where
+    put (MaxSize x) = put (Integer $ fromIntegral x)
+    get = do
+        Integer x <- get
+        return $ MaxSize $ fromIntegral x
+instance Serialize Flag where
+    put (Flag r pa) = do
+        let zero = zeroBits :: Word8
+            reportable = if r then setBit zero 0 else zero
+            privauth = case pa of
+                            NoAuthNoPriv -> zero
+                            AuthNoPriv -> setBit zero 2
+                            AuthPriv -> setBit zero 1 .|. setBit zero 2
+            flag = reportable .|. privauth
+        put $ OctetString (B.pack [flag])
+    get = do
+        OctetString f <- get
+        let [w] = B.unpack f
         return $ case (testBit w 0, testBit w 1) of
                       (True, True) -> Flag (testBit w 2) AuthPriv
                       (False, False) -> Flag (testBit w 2) NoAuthNoPriv
                       (True, False) -> Flag (testBit w 2) AuthNoPriv
-                      _ -> throw $ SnmpException 10
-
-instance ASN1Object SecurityModel where
-    toASN1 UserBasedSecurityModel xs = IntVal 3 : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        IntVal x <- getNext
+                      _ -> error "10" -- SnmpException 10
+instance Serialize SecurityModel where
+    put UserBasedSecurityModel = put (Integer 3)
+    get = do
+        Integer x <- get
         case x of
              3 -> return UserBasedSecurityModel
-             _ -> throw $ SnmpException 7
+             _ -> error "7" -- SnmpException 7
 
-instance ASN1Object SecurityParameter where
-    toASN1 SecurityParameter{..} xs = OctetString (encodeASN1' DER
-      [ Start Sequence
-      ,   OctetString authoritiveEngineId
-      ,   IntVal $ fromIntegral authoritiveEngineBoots
-      ,   IntVal $ fromIntegral authoritiveEngineTime
-      ,   OctetString userName
-      ,   OctetString authenticationParameters
-      ,   OctetString privacyParameters
-      , End Sequence
-      ]) : xs
-    fromASN1 asn = flip runParseASN1State asn $ do
-        OctetString packed <- getNext
-        let r = case decodeASN1' DER packed of
-             Left _ -> throw $ SnmpException 9
-             Right asn' -> parseMsgSecurityParameter asn'
-        case r of
-             Left _ -> throw $ SnmpException 9
-             Right r' -> return r'
-
-parseMsgSecurityParameter :: [ASN1] -> Either String SecurityParameter
-parseMsgSecurityParameter asn = flip runParseASN1 asn $ do
-     Start Sequence <- getNext
-     OctetString msgAuthoritiveEngineId <- getNext
-     IntVal msgAuthoritiveEngineBoots <- getNext
-     IntVal msgAuthoritiveEngineTime <- getNext
-     OctetString msgUserName <- getNext
-     OctetString msgAuthenticationParameters <- getNext
-     OctetString msgPrivacyParameters <- getNext
-     End Sequence <- getNext
-     return $ SecurityParameter msgAuthoritiveEngineId (fromIntegral msgAuthoritiveEngineBoots) (fromIntegral msgAuthoritiveEngineTime) msgUserName msgAuthenticationParameters msgPrivacyParameters
-
-instance Binary (PDU V3) where
-    put = putByteString . encodeASN1' DER . flip toASN1 []
-    get = toP . BL.toStrict <$> getRemainingLazyByteString
---    encode s = encodeASN1' DER $ toASN1 s []
---    decode = toP
-
-toP :: ByteString -> PDU V3
-toP bs = let a = fromASN1 <$> decodeASN1' DER bs
-         in case a of
-                 Right (Right (r, _)) -> r
-                 _ -> throw $ SnmpException 9
-
-instance Binary Packet where
-    put = putByteString . encodeASN1' DER . flip toASN1 []
---    encode s = encodeASN1' DER $ toASN1 s []
-    get = toB . BL.toStrict <$> getRemainingLazyByteString
-
-toB :: ByteString -> Packet
-toB bs = let a = fromASN1 <$> decodeASN1' DER bs
-         in case a of
-                 Right (Right (r, _)) -> r
-                 _ -> throw $ SnmpException 9
-                 --}
-                 --
-instance Show Coupla where
-    show (Coupla o v) = oidToString o ++ " = " ++ show v
-
-instance Show Suite where
-    show (Suite xs) = unlines $ map show xs
-
-oidToString :: OID -> String
-oidToString xs = foldr1 (\x y -> x ++ "." ++ y) $ map show xs
-
-instance ASN1Object Suite where
-    toASN1 (Suite xs) ys = foldr toA [] xs ++ ys
+instance Serialize SecurityParameter where
+    put SecurityParameter{..} = do
+        putTag (OctetString "")
+        putNested putLength (putWord8 0x30 >> putNested putLength putSecurityParameter)
+        where
+        putSecurityParameter = do
+            put (OctetString authoritiveEngineId)
+            put (Integer $ fromIntegral authoritiveEngineBoots)
+            put (Integer $ fromIntegral authoritiveEngineTime)
+            put (OctetString userName)
+            put (OctetString authenticationParameters)
+            put (OctetString privacyParameters)
+    get = do
+        getTag (tag (OctetString "")) 9
+        getNested getLength (getTag 0x30 9 >> getNested getLength getSecurityParameter')
       where
-      toA ::Coupla -> [ASN1] -> [ASN1]
-      toA (Coupla o v) zs = [Start Sequence , OID o] ++ toASN1 v (End Sequence : zs)
-    fromASN1 asn = flip runParseASN1State asn $ do
-        xs <- getMany $ do
-               Start Sequence <- getNext
-               OID x <- getNext
-               v <-  getObject
-               End Sequence <- getNext
-               return $ Coupla x v
-        return $ Suite xs
+      getSecurityParameter' :: Get SecurityParameter
+      getSecurityParameter' = do
+          OctetString authoritiveEngineId' <- get
+          Integer authoritiveEngineBoots' <- get
+          Integer authoritiveEngineTime' <- get
+          OctetString userName' <- get
+          OctetString authenticationParameters' <- get
+          OctetString privacyParameters' <- get
+          return $ SecurityParameter authoritiveEngineId'
+                                     (fromIntegral authoritiveEngineBoots')
+                                     (fromIntegral authoritiveEngineTime')
+                                     userName'
+                                     authenticationParameters'
+                                     privacyParameters'
 
-instance Show SnmpException where
-    show (SnmpException 1) = "tooBig"
-    show (SnmpException 2) = "noSuchName"
-    show (SnmpException 3) = "badValue"
-    show (SnmpException 4) = "readOnly"
-    show (SnmpException 5) = "genErr"
-    show (SnmpException 6) = "noAccess"
-    show (SnmpException 7) = "wrongType"
-    show (SnmpException 8) = "wrongLength"
-    show (SnmpException 9) = "wrongEncoding"
-    show (SnmpException 10) = "wrongValue"
-    show (SnmpException 11) = "noCreation"
-    show (SnmpException 12) = "inconsistentValue"
-    show (SnmpException 13) = "resourceUnavailable"
-    show (SnmpException 14) = "commitFailed"
-    show (SnmpException 15) = "undoFailed"
-    show (SnmpException 16) = "authorizationError"
-    show (SnmpException 17) = "notWritable"
-    show (SnmpException 18) = "inconsistentName"
-    show (SnmpException 80) = "General IO failure occured on the set request"
-    show (SnmpException 81) = "General SNMP timeout occured"
-    show (SnmpException x) = "Exception " ++ show x
 
-instance Exception SnmpException
+instance Serialize (Header V3) where
+    put (V3Header iD maxSize flag securityModel securityParameter) = do
+        putWord8 0x30
+        putNested putLength putHeader
+        put securityParameter
+        where
+        putHeader = do
+            put iD
+            put maxSize
+            put flag
+            put securityModel
+    get = do
+        getTag 0x30 9
+        (getNested getLength (V3Header <$> get <*> get <*> get <*> get)) <*> get
 
-packInteger :: Integer -> ByteString
-packInteger i
-  | i > 0 =
-    let simple = BL.toStrict $ BL.dropWhile (== 0) $ runPut . putWord64be . fromIntegral $ i
-    in if (B.head simple >= 128)
-          then B.cons 0 simple
-          else simple
-  | i < 0 =
-     let simple = BL.toStrict $ BL.dropWhile (== 255) . runPut . putWord64be . fromIntegral $ i
-         l = B.length simple
-     in case (l, B.head simple < 128) of
-             (0, _) -> "\255"
-             (_, True) -> B.cons 255 simple
-             _ -> simple
-  | otherwise = "\NUL"
+instance Serialize RequestId where
+    put (RequestId rid) = put (Integer $ fromIntegral rid)
+    get = do
+        Integer i <- get
+        return $ RequestId $ fromIntegral i
 
-unpackInteger :: ByteString -> Integer
-unpackInteger bs
-  | (B.head bs >= 128) = (fromIntegral $ runGet getWord64be . BL.fromStrict $ (B.replicate (8 - B.length bs) 255) <> bs) - (1 + fromIntegral (maxBound :: Word64))
-  | (B.head bs < 128) = fromIntegral . runGet getWord64be . BL.fromStrict $ (B.replicate (8 - B.length bs) 0) <> bs
-  | otherwise = 0
+instance Serialize ErrorStatus where
+    put (ErrorStatus es) = put (Integer $ fromIntegral es)
+    get = do
+        Integer i <- get
+        return $ ErrorStatus $ fromIntegral i
+
+instance Serialize ErrorIndex where
+    put (ErrorIndex ei) = put (Integer $ fromIntegral ei)
+    get = do
+        Integer i <- get
+        return $ ErrorIndex $ fromIntegral i
+
+instance Serialize Suite where
+    put (Suite bs) = putWord8 0x30 >> putNested putLength (mapM_ put bs)
+    get = do
+        getTag 0x30 9
+        Suite <$> getNested getLength (getSuite' [])
+        where
+        getSuite' xs = do
+            check <- isEmpty
+            if check
+               then return xs
+               else do
+                   coupla <- get
+                   getSuite' (coupla : xs)
+
+instance Serialize Coupla where
+    put Coupla{..} = putWord8 0x30 >> putNested putLength (put oid >> put value)
+    get = do
+        getTag 0x30 9
+        getNested getLength (Coupla <$> get <*> get)
+
+instance Serialize (PDU V2) where
+    put (PDU request suite) = do
+        putWord8 (tag request)
+        putNested putLength (put (rid request) >> put (es request) >> put (ei request) >> put suite)
+    get = do
+        t <- getWord8
+        let request = case t of
+                           0xa0 -> GetRequest
+                           0xa1 -> GetNextRequest
+                           0xa2 -> GetResponse
+                           0xa3 -> SetRequest
+                           0xa5 -> GetBulk
+                           0xa6 -> Inform
+                           0xa7 -> V2Trap
+                           0xa8 -> Report
+                           _ -> error "9"
+        getNested getLength (PDU <$> (request <$> get <*> get <*> get) <*> get)
+
+instance Serialize ContextEngineID where
+    put (ContextEngineID bs) = put (OctetString bs)
+    get = do
+        OctetString bs <- get
+        return (ContextEngineID bs)
+instance Serialize ContextName where
+    put (ContextName bs) = put (OctetString bs)
+    get = do
+        OctetString bs <- get
+        return (ContextName bs)
+
+instance Serialize (PDU V3) where
+    put (ScopedPDU contextEngine contextName pduv2) = putWord8 0x30 >> putNested putLength (put contextEngine >> put contextName >> put pduv2)
+    put (CryptedPDU bs) = put (OctetString bs)
+    get = do
+        t <- getWord8
+        case t of
+             0x30 -> getNested getLength (ScopedPDU <$> get <*> get <*> get)
+             0x04 -> do
+                 l <- getLength
+                 CryptedPDU <$> getByteString l
+             _ -> error "9"
+
+instance Serialize Packet where
+    put (V2Packet version header body) = putWord8 0x30 >> putNested putLength (put version >> put header >> put body)
+    put (V3Packet version header body) = putWord8 0x30 >> putNested putLength (put version >> put header >> put body)
+    get = getTag 0x30 9 >> getNested getLength getAll
+      where
+      getAll = get >>= getPacket
+      getPacket Version1 = V2Packet Version1 <$> get <*> get
+      getPacket Version2 = V2Packet Version2 <$> get <*> get
+      getPacket Version3 = V3Packet Version3 <$> get <*> get
+-------------------------------------------------------------------------------------------------------------
+
 
 cleanPass :: ByteString
 cleanPass = B.pack $ replicate 12 0x00
@@ -915,7 +1014,7 @@ hmac SHA key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.SHA1)
 -- | (only V3) sign Packet
 signPacket :: AuthType -> Key -> Packet -> Packet
 signPacket at key packet =
-    let packetAsBin = BL.toStrict $ encode packet
+    let packetAsBin = encode packet
         sign = B.take 12 $ hmac at key packetAsBin
     in setAuthenticationParametersP sign packet
 
@@ -1013,7 +1112,7 @@ stripBS bs =
         l1 = fromIntegral $ B.head bs'
     in if testBit l1 7
         then case clearBit l1 7 of
-                  0   -> throw $ SnmpException 12
+                  0   -> throw $ SnmpException (ErrorStatus 12)
                   len ->
                     let size = uintbs (B.take len (B.drop 1 bs'))
                     in B.take (size + len + 2) bs
@@ -1021,3 +1120,4 @@ stripBS bs =
     where
       {- uintbs return the unsigned int represented by the bytes -}
       uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
+
