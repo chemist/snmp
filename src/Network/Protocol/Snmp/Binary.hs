@@ -4,6 +4,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE RecordWildCards         #-}
 module Network.Protocol.Snmp.Binary where
 
 import           Data.Serialize
@@ -14,8 +15,10 @@ import           Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import           Data.Word
 -- import           Debug.Trace
+import           Control.Monad
 import           GHC.Generics
 import           GHC.Int         (Int32, Int64)
+import Data.List (unfoldr)
 
 data Value = Integer Int32
            | BitString ByteString
@@ -38,8 +41,10 @@ data Value = Integer Int32
 table :: [(Integer, ByteString)]
 table = zip [0 .. 10] $ map (B.drop 3 . encode) ([0 .. 10] :: [Word32])
 
+type Tag = Word8 
+
 class Tags a where
-    tag :: a -> Word8
+    tag :: a -> Tag
 
 instance Tags Value where
     tag (Integer _) = 0x02
@@ -174,6 +179,29 @@ newtype ContextName = ContextName ByteString
 -- | some exception
 newtype SnmpException = SnmpException ErrorStatus
     deriving (Typeable, Eq)
+
+instance Show SnmpException where
+    show (SnmpException 1) = "tooBig"
+    show (SnmpException 2) = "noSuchName"
+    show (SnmpException 3) = "badValue"
+    show (SnmpException 4) = "readOnly"
+    show (SnmpException 5) = "genErr"
+    show (SnmpException 6) = "noAccess"
+    show (SnmpException 7) = "wrongType"
+    show (SnmpException 8) = "wrongLength"
+    show (SnmpException 9) = "wrongEncoding"
+    show (SnmpException 10) = "wrongValue"
+    show (SnmpException 11) = "noCreation"
+    show (SnmpException 12) = "inconsistentValue"
+    show (SnmpException 13) = "resourceUnavailable"
+    show (SnmpException 14) = "commitFailed"
+    show (SnmpException 15) = "undoFailed"
+    show (SnmpException 16) = "authorizationError"
+    show (SnmpException 17) = "notWritable"
+    show (SnmpException 18) = "inconsistentName"
+    show (SnmpException 80) = "General IO failure occured on the set request"
+    show (SnmpException 81) = "General SNMP timeout occured"
+    show (SnmpException x) = "Exception " ++ show x
 
 -- | some universal getters, setters
 class HasItem a where
@@ -460,7 +488,7 @@ newtype Size = Size Int deriving (Eq, Show, Ord)
 instance Serialize Size where
     put (Size i)
       | i >= 0 && i <= 0x7f         = mapM_ putWord8 [fromIntegral i]
-      | i < 0     = error "putLength: long length is negative"
+      | i < 0     = error "8"
       | otherwise = mapM_ putWord8 $ lenbytes : lw
       where
       lw       = bytesOfUInt $ fromIntegral i
@@ -479,8 +507,6 @@ instance Serialize Size where
       {- uintbs return the unsigned int represented by the bytes -}
       uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
 
-newtype Sequence a = Sequence a deriving (Show, Eq, Generic)
-
 putLength :: Putter Int
 putLength x = put (Size x)
 
@@ -489,14 +515,17 @@ getLength = do
     Size i <- get
     return i
 
-instance Serialize a => Serialize (Sequence a) where
-    put (Sequence x) = putWord8 0x30 >> putNested putLength (put x)
-    get = do
-        0x30 <- getWord8
-        getNested getLength get
-
 putTag :: Value -> Put
 putTag = putWord8 . tag
+
+type ErrorCode = Int
+
+getTag :: Tag -> ErrorCode -> Get ()
+getTag x e = do
+    t <- getWord8
+    if t /= x 
+       then error $ show e
+       else return ()
 
 putIntegral :: Integral a => Value -> a -> Put
 putIntegral v a = do
@@ -506,7 +535,7 @@ putIntegral v a = do
     put (Size l)
     mapM_ putWord8 bytes
 
-putIntegralU :: Integral a => Value -> a -> Put 
+putIntegralU :: Integral a => Value -> a -> Put
 putIntegralU v a = do
     putTag v
     let bytes = bytesOfUInt (fromIntegral a)
@@ -544,13 +573,13 @@ instance Serialize Value where
         putTag v
         putWord8 4
         putWord8 a >> putWord8 b >> putWord8 c >> putWord8 d
-    put v@(Counter32 i) = putIntegralU v i 
+    put v@(Counter32 i) = putIntegralU v i
     put v@(Gauge32 i) = putIntegralU v i
     put v@(TimeTicks i) = putIntegralU v i
     put v@(Opaque bs) = putBS v bs
     put v@(NsapAddress bs) = putBS v bs
     put v@(Counter64 i) = putIntegral v i
-    put v@(Uinteger32 i) = putIntegralU v i 
+    put v@(Uinteger32 i) = putIntegralU v i
     put v@NoSuchObject = do
         putTag v
         putWord8 0
@@ -565,13 +594,59 @@ instance Serialize Value where
         case t of
              0x02 -> do
                  Size l <- get
-                 b <- getBytes (fromIntegral l)
-                 let (_, i) = intOfBytes b
-                 return (Integer $ fromIntegral i)
+                 Integer . fromIntegral . snd . intOfBytes <$> getBytes (fromIntegral l)
              0x03 -> do
                  Size l <- get
                  BitString <$> getByteString l
-             _ -> error "not implemented"
+             0x04 -> do
+                 Size l <- get
+                 OctetString <$> getByteString l
+             0x05 -> do
+                 Size _ <- get
+                 0 <- getWord8
+                 return Null
+             0x06 -> do
+                 Size l <- get
+                 bs <- getByteString (fromIntegral l)
+                 let (x:xs) = B.unpack bs
+                     groupOID :: [Word8] -> [Word16]
+                     groupOID = map (foldl (\acc n -> (acc `shiftL` 7) + fromIntegral n) 0) . groupSubOID
+                     groupSubOIDHelper [] = Nothing
+                     groupSubOIDHelper s = Just $ spanSubOIDbound s
+                     groupSubOID :: [Word8] -> [[Word8]]
+                     groupSubOID = unfoldr groupSubOIDHelper
+                     spanSubOIDbound [] = ([], [])
+                     spanSubOIDbound (a:as) = if testBit a 7 then (clearBit a 7 : ys, zs) else ([a], as)
+                       where (ys, zs) = spanSubOIDbound as
+                 return $ OI (fromIntegral (x `div` 40) : fromIntegral (x `mod` 40) : groupOID xs)
+             0x40 -> do
+                 Size _ <- get
+                 IpAddress <$> getWord8 <*> getWord8 <*> getWord8 <*> getWord8
+             0x41 -> do
+                 Size l <- get
+                 Counter32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x42 -> do
+                 Size l <- get
+                 Gauge32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x43 -> do
+                 Size l <- get
+                 TimeTicks . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x44 -> do
+                 Size l <- get
+                 Opaque <$> getByteString (fromIntegral l)
+             0x45 -> do
+                 Size l <- get
+                 NsapAddress <$> getByteString (fromIntegral l)
+             0x46 -> do
+                 Size l <- get
+                 Counter64 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x47 -> do
+                 Size l <- get
+                 Uinteger32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+             0x80 -> void getWord8 *> return NoSuchObject
+             0x81 -> void getWord8 *> return NoSuchInstance
+             0x82 -> void getWord8 *> return EndOfMibView
+             _ -> error "9"
 
 
 {- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
@@ -613,4 +688,115 @@ putVarEncodingIntegral i = B.reverse $ B.unfoldr genOctets (i,True)
                 let out = fromIntegral (x .&. 0x7F) .|. (if first then 0 else 0x80) in
                 Just (out, (shiftR x 7, False))
             | otherwise = Nothing
+
+instance Serialize Version where
+    put Version1 = put (Integer 0)
+    put Version2 = put (Integer 1)
+    put Version3 = put (Integer 3)
+    get = do
+        Integer x <- get
+        case x of
+             0 -> return Version1
+             1 -> return Version2
+             3 -> return Version3
+             _ -> error "10"
+
+instance Serialize Community where
+    put (Community bs) = put (OctetString bs)
+    get = do
+        OctetString bs <- get
+        return (Community bs)
+
+instance Serialize (Header V2) where
+    put (V2Header c) = put c
+    get = do
+        c <- get
+        return $ V2Header c
+
+instance Serialize ID where
+    put (ID x) = put (Integer x)
+    get = do
+        Integer x <- get
+        return $ ID x
+instance Serialize MaxSize where
+    put (MaxSize x) = put (Integer $ fromIntegral x)
+    get = do
+        Integer x <- get
+        return $ MaxSize $ fromIntegral x
+instance Serialize Flag where
+    put (Flag r pa) = do
+        let zero = zeroBits :: Word8
+            reportable = if r then setBit zero 0 else zero
+            privauth = case pa of
+                            NoAuthNoPriv -> zero
+                            AuthNoPriv -> setBit zero 2
+                            AuthPriv -> setBit zero 1 .|. setBit zero 2
+            flag = reportable .|. privauth
+        put $ OctetString (B.pack [flag]) 
+    get = do
+        OctetString f <- get
+        let [w] = B.unpack f
+        return $ case (testBit w 0, testBit w 1) of
+                      (True, True) -> Flag (testBit w 2) AuthPriv
+                      (False, False) -> Flag (testBit w 2) NoAuthNoPriv
+                      (True, False) -> Flag (testBit w 2) AuthNoPriv
+                      _ -> error "10" -- SnmpException 10
+instance Serialize SecurityModel where
+    put UserBasedSecurityModel = put (Integer 3)
+    get = do
+        Integer x <- get
+        case x of
+             3 -> return UserBasedSecurityModel
+             _ -> error "7" -- SnmpException 7
+
+instance Serialize SecurityParameter where
+    put SecurityParameter{..} = do
+        putTag (OctetString "")
+        putNested putLength (putWord8 0x30 >> putNested putLength putSecurityParameter)
+        where
+        putSecurityParameter = do
+            put (OctetString authoritiveEngineId)
+            put (Integer $ fromIntegral authoritiveEngineBoots)
+            put (Integer $ fromIntegral authoritiveEngineTime)
+            put (OctetString userName)
+            put (OctetString authenticationParameters)
+            put (OctetString privacyParameters)
+    get = do
+        getTag (tag (OctetString "")) 9
+        getNested getLength (getTag 0x30 9 >> getNested getLength getSecurityParameter')
+      where
+      getSecurityParameter' :: Get SecurityParameter
+      getSecurityParameter' = do
+          OctetString authoritiveEngineId' <- get
+          Integer authoritiveEngineBoots' <- get
+          Integer authoritiveEngineTime' <- get
+          OctetString userName' <- get
+          OctetString authenticationParameters' <- get
+          OctetString privacyParameters' <- get
+          return $ SecurityParameter authoritiveEngineId' 
+                                     (fromIntegral authoritiveEngineBoots')
+                                     (fromIntegral authoritiveEngineTime')
+                                     userName'
+                                     authenticationParameters'
+                                     privacyParameters'
+
+
+instance Serialize (Header V3) where
+    put (V3Header iD maxSize flag securityModel securityParameter) = do
+        putWord8 0x30
+        putNested putLength putHeader
+        put securityParameter
+        where
+        putHeader = do
+            put iD
+            put maxSize
+            put flag
+            put securityModel
+    get = do
+        getTag 0x30 9
+        (iD, maxSize, flag, securityModel) <- getNested getLength getHeader' 
+        securityParameter <- get
+        return $ V3Header iD maxSize flag securityModel securityParameter
+        where
+        getHeader' = (,,,) <$> get <*> get <*> get <*> get
 

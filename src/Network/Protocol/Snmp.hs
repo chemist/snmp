@@ -906,7 +906,7 @@ hash SHA bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.SHA1)
 
 hashlazy :: (BA.ByteArray a) => AuthType -> BL.ByteString -> a
 hashlazy MD5 bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
-hashlazy SHA bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
+hashlazy SHA bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.SHA1)
 
 hmac :: (BA.ByteArrayAccess key, BA.ByteArray msg) => AuthType -> key -> msg -> ByteString
 hmac MD5 key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.MD5)
