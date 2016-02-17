@@ -3,22 +3,32 @@
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE RecordWildCards         #-}
 module Network.Protocol.Snmp.Binary where
 
 import           Data.Serialize
-import           Data.Typeable   (Typeable)
+import           Data.Typeable        (Typeable)
 -- import Network.Protocol.Snmp ()
+import           Control.Exception    (Exception, throw)
 import           Data.Bits
-import           Data.ByteString (ByteString)
-import qualified Data.ByteString as B
+import           Data.ByteString      (ByteString)
+import qualified Data.ByteString      as B
 import           Data.Word
 -- import           Debug.Trace
 import           Control.Monad
+import qualified Crypto.Cipher.AES    as Priv
+import qualified Crypto.Cipher.DES    as Priv
+import qualified Crypto.Cipher.Types  as Priv
+import qualified Crypto.Error         as Priv
+import qualified Crypto.Hash          as Hash
+import qualified Crypto.MAC.HMAC      as HMAC
+import qualified Data.ByteArray       as BA
+import qualified Data.ByteString.Lazy as BL
+import           Data.List            (unfoldr)
+import           Data.Monoid          ((<>))
 import           GHC.Generics
-import           GHC.Int         (Int32, Int64)
-import Data.List (unfoldr)
+import           GHC.Int              (Int32, Int64)
 
 data Value = Integer Int32
            | BitString ByteString
@@ -38,10 +48,7 @@ data Value = Integer Int32
            | EndOfMibView
            deriving (Eq, Show, Ord, Generic)
 
-table :: [(Integer, ByteString)]
-table = zip [0 .. 10] $ map (B.drop 3 . encode) ([0 .. 10] :: [Word32])
-
-type Tag = Word8 
+type Tag = Word8
 
 class Tags a where
     tag :: a -> Tag
@@ -189,6 +196,8 @@ newtype ContextName = ContextName ByteString
 -- | some exception
 newtype SnmpException = SnmpException ErrorStatus
     deriving (Typeable, Eq)
+
+instance Exception SnmpException
 
 instance Show SnmpException where
     show (SnmpException (ErrorStatus 1)) = "tooBig"
@@ -484,15 +493,6 @@ setRequest req (V3Packet v h (ScopedPDU a b (PDU _ s))) = V3Packet v h (ScopedPD
 setRequest _ _ = undefined
 ----------------------------------------------------------------------------------------
 
-type EngineBootId = Int32
-type PrivacyParameter = ByteString
-type EngineId = ByteString
-type Salt = ByteString
-type Encrypted = ByteString
-type Raw = ByteString
-type Rand32 = Int32
-type Rand64 = Int64
-
 newtype Size = Size Int deriving (Eq, Show, Ord)
 
 instance Serialize Size where
@@ -533,7 +533,7 @@ type ErrorCode = Int
 getTag :: Tag -> ErrorCode -> Get ()
 getTag x e = do
     t <- getWord8
-    if t /= x 
+    if t /= x
        then error $ show e
        else return ()
 
@@ -742,7 +742,7 @@ instance Serialize Flag where
                             AuthNoPriv -> setBit zero 2
                             AuthPriv -> setBit zero 1 .|. setBit zero 2
             flag = reportable .|. privauth
-        put $ OctetString (B.pack [flag]) 
+        put $ OctetString (B.pack [flag])
     get = do
         OctetString f <- get
         let [w] = B.unpack f
@@ -783,7 +783,7 @@ instance Serialize SecurityParameter where
           OctetString userName' <- get
           OctetString authenticationParameters' <- get
           OctetString privacyParameters' <- get
-          return $ SecurityParameter authoritiveEngineId' 
+          return $ SecurityParameter authoritiveEngineId'
                                      (fromIntegral authoritiveEngineBoots')
                                      (fromIntegral authoritiveEngineTime')
                                      userName'
@@ -804,11 +804,7 @@ instance Serialize (Header V3) where
             put securityModel
     get = do
         getTag 0x30 9
-        (iD, maxSize, flag, securityModel) <- getNested getLength getHeader' 
-        securityParameter <- get
-        return $ V3Header iD maxSize flag securityModel securityParameter
-        where
-        getHeader' = (,,,) <$> get <*> get <*> get <*> get
+        (getNested getLength (V3Header <$> get <*> get <*> get <*> get)) <*> get
 
 instance Serialize RequestId where
     put (RequestId rid) = put (Integer $ fromIntegral rid)
@@ -836,7 +832,7 @@ instance Serialize Suite where
         where
         getSuite' xs = do
             check <- isEmpty
-            if check 
+            if check
                then return xs
                else do
                    coupla <- get
@@ -855,14 +851,179 @@ instance Serialize (PDU V2) where
     get = do
         t <- getWord8
         let request = case t of
-                           0xa0 -> GetRequest 
-                           0xa1 -> GetNextRequest 
+                           0xa0 -> GetRequest
+                           0xa1 -> GetNextRequest
                            0xa2 -> GetResponse
-                           0xa3 -> SetRequest 
+                           0xa3 -> SetRequest
                            0xa5 -> GetBulk
                            0xa6 -> Inform
                            0xa7 -> V2Trap
                            0xa8 -> Report
                            _ -> error "9"
         getNested getLength (PDU <$> (request <$> get <*> get <*> get) <*> get)
+
+instance Serialize ContextEngineID where
+    put (ContextEngineID bs) = put (OctetString bs)
+    get = do
+        OctetString bs <- get
+        return (ContextEngineID bs)
+instance Serialize ContextName where
+    put (ContextName bs) = put (OctetString bs)
+    get = do
+        OctetString bs <- get
+        return (ContextName bs)
+
+instance Serialize (PDU V3) where
+    put (ScopedPDU contextEngine contextName pduv2) = putWord8 0x30 >> putNested putLength (put contextEngine >> put contextName >> put pduv2)
+    put (CryptedPDU bs) = put (OctetString bs)
+    get = do
+        t <- getWord8
+        case t of
+             0x30 -> getNested getLength (ScopedPDU <$> get <*> get <*> get)
+             0x04 -> do
+                 l <- getLength
+                 CryptedPDU <$> getByteString l
+             _ -> error "9"
+
+instance Serialize Packet where
+    put (V2Packet version header body) = putWord8 0x30 >> putNested putLength (put version >> put header >> put body)
+    put (V3Packet version header body) = putWord8 0x30 >> putNested putLength (put version >> put header >> put body)
+    get = getTag 0x30 9 >> getNested getLength getAll
+      where
+      getAll = get >>= getPacket
+      getPacket Version1 = V2Packet Version1 <$> get <*> get
+      getPacket Version2 = V2Packet Version2 <$> get <*> get
+      getPacket Version3 = V3Packet Version3 <$> get <*> get
+-------------------------------------------------------------------------------------------------------------
+
+
+cleanPass :: ByteString
+cleanPass = B.pack $ replicate 12 0x00
+
+data PrivType = DES | AES deriving (Show, Ord, Eq)
+data AuthType = MD5 | SHA deriving (Show, Ord, Eq)
+type Key = ByteString
+type Password = ByteString
+
+hash :: (BA.ByteArray a) => AuthType -> ByteString -> a
+hash MD5 bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.MD5)
+hash SHA bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.SHA1)
+
+hashlazy :: (BA.ByteArray a) => AuthType -> BL.ByteString -> a
+hashlazy MD5 bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
+hashlazy SHA bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.SHA1)
+
+hmac :: (BA.ByteArrayAccess key, BA.ByteArray msg) => AuthType -> key -> msg -> ByteString
+hmac MD5 key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.MD5)
+hmac SHA key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.SHA1)
+
+-- | (only V3) sign Packet
+signPacket :: AuthType -> Key -> Packet -> Packet
+signPacket at key packet =
+    let packetAsBin = encode packet
+        sign = B.take 12 $ hmac at key packetAsBin
+    in setAuthenticationParametersP sign packet
+
+-- | create auth key from password and context engine id
+passwordToKey :: AuthType -> Password -> EngineId -> Key
+passwordToKey at pass eid =
+  let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
+      authKey = hashlazy at buf
+  in hash at $ authKey <> eid <> authKey
+
+-----------------------------------------------------------------------------------------------------
+
+type EngineBootId = Int32
+type PrivacyParameter = ByteString
+type EngineId = ByteString
+type Salt = ByteString
+type Encrypted = ByteString
+type Raw = ByteString
+type Rand32 = Int32
+type Rand64 = Int64
+
+desEncrypt :: Key -> EngineBootId -> Rand32 -> Raw -> (Encrypted, Salt)
+desEncrypt privKey engineBoot localInt dataToEncrypt =
+    let desKey = B.take 8 privKey
+        preIV = B.drop 8 $ B.take 16 privKey
+        salt = toSalt engineBoot localInt
+        ivR = B.pack $ zipWith xor (B.unpack preIV) (B.unpack salt)
+        Just iv = Priv.makeIV ivR :: Maybe (Priv.IV Priv.DES)
+        -- Right key = Priv.makeKey desKey
+        Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
+        tailLen = (8 - B.length dataToEncrypt `rem` 8) `rem` 8
+        tailB = B.replicate tailLen 0x00
+    in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
+
+type EngineTime = Int32
+
+aesEncrypt :: Key -> EngineBootId -> EngineTime -> Rand64 -> Raw -> (Encrypted, Salt)
+aesEncrypt privKey engineBoot engineTime rcounter dataToEncrypt =
+    let aesKey = B.take 16 privKey
+        salt = wToBs rcounter
+        Just iv = Priv.makeIV $ toSalt engineBoot engineTime <> salt :: Maybe (Priv.IV Priv.AES128)
+        -- Right key = Priv.makeKey aesKey
+        Priv.CryptoPassed aes = Priv.cipherInit aesKey :: Priv.CryptoFailable Priv.AES128
+    in (Priv.cfbEncrypt aes iv dataToEncrypt, salt)
+
+
+wToBs :: Int64 -> ByteString
+wToBs x = B.pack
+  [ fromIntegral $! x `shiftR` 56 .&. 0xff
+  , fromIntegral $! x `shiftR` 48 .&. 0xff
+  , fromIntegral $! x `shiftR` 40 .&. 0xff
+  , fromIntegral $! x `shiftR` 32 .&. 0xff
+  , fromIntegral $! x `shiftR` 24 .&. 0xff
+  , fromIntegral $! x `shiftR` 16 .&. 0xff
+  , fromIntegral $! x `shiftR` 8 .&. 0xff
+  , fromIntegral $! x `shiftR` 0 .&. 0xff
+  ]
+
+toSalt :: Int32 -> Int32 -> ByteString
+toSalt x y = B.pack
+  [ fromIntegral $! x `shiftR` 24 .&. 0xff
+  , fromIntegral $! x `shiftR` 16 .&. 0xff
+  , fromIntegral $! x `shiftR`  8 .&. 0xff
+  , fromIntegral $! x `shiftR`  0 .&. 0xff
+  , fromIntegral $! y `shiftR` 24 .&. 0xff
+  , fromIntegral $! y `shiftR` 16 .&. 0xff
+  , fromIntegral $! y `shiftR`  8 .&. 0xff
+  , fromIntegral $! y `shiftR`  0 .&. 0xff
+  ]
+
+desDecrypt :: Key -> Salt -> Encrypted -> Raw
+desDecrypt privKey privParameters dataToDecrypt =
+    let desKey = B.take 8 privKey
+        preIV = B.drop 8 $ B.take 16 privKey
+        salt = privParameters
+        ivR = zipWith xor (B.unpack preIV) (B.unpack salt)
+        Just iv = (Priv.makeIV (B.pack ivR) :: Maybe (Priv.IV Priv.DES))
+        -- Right key = Priv.makeKey desKey
+        Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
+    in stripBS $ Priv.cbcDecrypt des iv dataToDecrypt
+
+aesDecrypt :: Key -> Salt -> EngineBootId -> EngineTime -> Encrypted -> Raw
+aesDecrypt privKey privParameters engineBoot engineTime dataToDecrypt =
+    let aesKey = B.take 16 privKey
+        salt = privParameters
+        ivR = toSalt engineBoot engineTime <> salt
+        Just iv = (Priv.makeIV ivR :: Maybe (Priv.IV Priv.AES128))
+        -- Right key = Priv.makeKey aesKey
+        Priv.CryptoPassed aes = Priv.cipherInit aesKey :: Priv.CryptoFailable Priv.AES128
+    in stripBS $ Priv.cfbDecrypt aes iv dataToDecrypt
+
+stripBS :: ByteString -> ByteString
+stripBS bs =
+    let bs' = B.drop 1 bs
+        l1 = fromIntegral $ B.head bs'
+    in if testBit l1 7
+        then case clearBit l1 7 of
+                  0   -> throw $ SnmpException (ErrorStatus 12)
+                  len ->
+                    let size = uintbs (B.take len (B.drop 1 bs'))
+                    in B.take (size + len + 2) bs
+        else B.take (l1 + 2) bs
+    where
+      {- uintbs return the unsigned int represented by the bytes -}
+      uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
 
