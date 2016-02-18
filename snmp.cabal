@@ -53,6 +53,6 @@ benchmark prelude-benchmarks
                  criterion,
                  snmp,
                  cereal,
-                 binary
+                 binary,
+                 bytestring
 
-         
