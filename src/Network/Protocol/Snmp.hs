@@ -825,6 +825,7 @@ instance Serialize Value where
             0x81 -> void getWord8 *> return NoSuchInstance
             0x82 -> void getWord8 *> return EndOfMibView
             _ -> error "9"
+    -- {-# INLINE get #-}
 
 {- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
 uintOfBytes :: ByteString -> (Int, Integer)
