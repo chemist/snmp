@@ -743,10 +743,8 @@ instance Serialize Value where
         case oids of
             (oid1:oid2:suboids) -> do
                 let eoidclass = fromIntegral (oid1 * 40 + oid2)
-                putTag v
-                let bs = B.cons eoidclass $ B.concat $ map encode' suboids
-                put (Size (B.length bs))
-                putByteString bs
+                    bs = B.cons eoidclass $ B.concat $ map encode' suboids
+                putBS v bs
             _ -> error "put oi"
       where
         encode' 0 = B.singleton 0
@@ -787,6 +785,8 @@ instance Serialize Value where
                 Size l <- get
                 bs <- getByteString l
                 let (x:xs) = B.unpack bs
+                    firstOI = fromIntegral (x `div` 40)
+                    secondOI = fromIntegral (x `mod` 40)
                     groupOID :: [Word8] -> [Word16]
                     groupOID = map (foldl (\acc n -> (acc `shiftL` 7) + fromIntegral n) 0) . groupSubOID
                     groupSubOIDHelper [] = Nothing
@@ -796,7 +796,7 @@ instance Serialize Value where
                     spanSubOIDbound [] = ([], [])
                     spanSubOIDbound (a:as) = if testBit a 7 then (clearBit a 7 : ys, zs) else ([a], as)
                       where (ys, zs) = spanSubOIDbound as
-                return $ OI (fromIntegral (x `div` 40) : fromIntegral (x `mod` 40) : groupOID xs)
+                return $ OI (firstOI : secondOI : groupOID xs)
             0x40 -> do
                 Size _ <- get
                 IpAddress <$> getWord8 <*> getWord8 <*> getWord8 <*> getWord8
@@ -833,7 +833,8 @@ uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral 
 --bytesOfUInt i = B.unfoldr (\x -> if x == 0 then Nothing else Just (fromIntegral (x .&. 0xff), x `shiftR` 8)) i
 bytesOfUInt :: Integer -> [Word8]
 bytesOfUInt x = reverse (list x)
-  where list i = if i <= 0xff then [fromIntegral i] else (fromIntegral i .&. 0xff) : list (i `shiftR` 8)
+  where
+    list i = if i <= 0xff then [fromIntegral i] else (fromIntegral i .&. 0xff) : list (i `shiftR` 8)
 
 {- | intOfBytes returns the number of bytes in the list and
    the represented integer by a two's completement list of bytes -}
