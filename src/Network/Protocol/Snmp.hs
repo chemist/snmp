@@ -731,13 +731,14 @@ putBS v bs = do
     put (Size l)
     putByteString bs
 
+putZero :: Tags v => v -> Put
+putZero v = putTag v >> putWord8 0
+
 instance Serialize Value where
     put v@(Integer i) = putIntegral v i
     put v@(BitString bs) = putBS v bs
     put v@(OctetString bs) = putBS v bs
-    put Null = do
-        putTag Null
-        putWord8 0
+    put Null = putZero Null
     put v@(OI oids) =
         case oids of
             (oid1:oid2:suboids) -> do
@@ -761,15 +762,11 @@ instance Serialize Value where
     put v@(NsapAddress bs) = putBS v bs
     put v@(Counter64 i) = putIntegral v i
     put v@(Uinteger32 i) = putIntegralU v i
-    put v@NoSuchObject = do
-        putTag v
-        putWord8 0
-    put v@NoSuchInstance = do
-        putTag v
-        putWord8 0
-    put v@EndOfMibView = do
-        putTag v
-        putWord8 0
+    put v@NoSuchObject = putZero v
+    put v@NoSuchInstance = putZero v
+    put v@EndOfMibView = putZero v
+    -- {-# INLINE put #-}
+
     get = do
         t <- getWord8
         case t of
