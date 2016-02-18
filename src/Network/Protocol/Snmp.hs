@@ -712,7 +712,7 @@ putIntegral :: (Tags b, Integral a) => b -> a -> Put
 putIntegral v a = do
     putTag v
     let bytes = bytesOfInt (fromIntegral a)
-        l = fromIntegral $ length bytes
+        l = length bytes
     put (Size l)
     mapM_ putWord8 bytes
 
@@ -720,14 +720,14 @@ putIntegralU :: (Tags b, Integral a) => b -> a -> Put
 putIntegralU v a = do
     putTag v
     let bytes = bytesOfUInt (fromIntegral a)
-        l = fromIntegral $ length bytes
+        l = length bytes
     put (Size l)
     mapM_ putWord8 bytes
 
 putBS :: Value -> ByteString -> Put
 putBS v bs = do
     putTag v
-    let l = fromIntegral $ B.length bs
+    let l = B.length bs
     put (Size l)
     putByteString bs
 
@@ -775,7 +775,7 @@ instance Serialize Value where
         case t of
             0x02 -> do
                 Size l <- get
-                Integer . fromIntegral . snd . intOfBytes <$> getBytes (fromIntegral l)
+                Integer . fromIntegral . snd . intOfBytes <$> getBytes l
             0x03 -> do
                 Size l <- get
                 BitString <$> getByteString l
@@ -788,7 +788,7 @@ instance Serialize Value where
                 return Null
             0x06 -> do
                 Size l <- get
-                bs <- getByteString (fromIntegral l)
+                bs <- getByteString l
                 let (x:xs) = B.unpack bs
                     groupOID :: [Word8] -> [Word16]
                     groupOID = map (foldl (\acc n -> (acc `shiftL` 7) + fromIntegral n) 0) . groupSubOID
@@ -805,30 +805,29 @@ instance Serialize Value where
                 IpAddress <$> getWord8 <*> getWord8 <*> getWord8 <*> getWord8
             0x41 -> do
                 Size l <- get
-                Counter32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+                Counter32 . fromIntegral . snd . uintOfBytes <$> getBytes l
             0x42 -> do
                 Size l <- get
-                Gauge32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+                Gauge32 . fromIntegral . snd . uintOfBytes <$> getBytes l
             0x43 -> do
                 Size l <- get
-                TimeTicks . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+                TimeTicks . fromIntegral . snd . uintOfBytes <$> getBytes l
             0x44 -> do
                 Size l <- get
-                Opaque <$> getByteString (fromIntegral l)
+                Opaque <$> getByteString l
             0x45 -> do
                 Size l <- get
-                NsapAddress <$> getByteString (fromIntegral l)
+                NsapAddress <$> getByteString l
             0x46 -> do
                 Size l <- get
-                Counter64 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+                Counter64 . fromIntegral . snd . uintOfBytes <$> getBytes l
             0x47 -> do
                 Size l <- get
-                Uinteger32 . fromIntegral . snd . uintOfBytes <$> getBytes (fromIntegral l)
+                Uinteger32 . fromIntegral . snd . uintOfBytes <$> getBytes l
             0x80 -> void getWord8 *> return NoSuchObject
             0x81 -> void getWord8 *> return NoSuchInstance
             0x82 -> void getWord8 *> return EndOfMibView
             _ -> error "9"
-
 
 {- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
 uintOfBytes :: ByteString -> (Int, Integer)
