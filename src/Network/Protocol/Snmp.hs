@@ -711,24 +711,23 @@ getTag x e = do
 putIntegral :: (Tags b, Integral a) => b -> a -> Put
 putIntegral v a = do
     putTag v
-    let bytes = bytesOfInt (fromIntegral a)
-        l = length bytes
-    put (Size l)
+    putLength (length bytes)
     mapM_ putWord8 bytes
+  where
+    bytes = bytesOfInt (fromIntegral a)
 
 putIntegralU :: (Tags b, Integral a) => b -> a -> Put
 putIntegralU v a = do
     putTag v
-    let bytes = bytesOfUInt (fromIntegral a)
-        l = length bytes
-    put (Size l)
+    putLength (length bytes)
     mapM_ putWord8 bytes
+  where
+    bytes = bytesOfUInt (fromIntegral a)
 
 putBS :: Value -> ByteString -> Put
 putBS v bs = do
     putTag v
-    let l = B.length bs
-    put (Size l)
+    putLength (B.length bs)
     putByteString bs
 
 putZero :: Tags v => v -> Put
