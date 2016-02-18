@@ -194,6 +194,7 @@ instance Tags Value where
     tag NoSuchObject = 0x80
     tag NoSuchInstance = 0x81
     tag EndOfMibView = 0x82
+    {-# INLINE tag #-}
 
 instance Tags Request where
     tag GetRequest{} = 0xa0
@@ -204,6 +205,7 @@ instance Tags Request where
     tag Inform{} = 0xa6
     tag V2Trap{} = 0xa7
     tag Report{} = 0xa8
+    {-# INLINE tag #-}
 
 -- | Phantom type for version 1 (Header V2, PDU V2)
 data V1
@@ -344,6 +346,7 @@ instance Show SnmpException where
     show (SnmpException (ErrorStatus 80)) = "General IO failure occured on the set request"
     show (SnmpException (ErrorStatus 81)) = "General SNMP timeout occured"
     show (SnmpException (ErrorStatus x)) = "Exception " ++ show x
+    {-# INLINE show #-}
 
 -- | some universal getters, setters
 class HasItem a where
@@ -361,48 +364,70 @@ instance Construct (Version -> Packet) where
     initial Version3 = V3Packet Version3 initial initial
     initial Version2 = V2Packet Version2 initial initial
     initial Version1 = V2Packet Version1 initial initial
+    {-# INLINE initial #-}
 
 instance Construct (Header V3) where
     initial = V3Header (ID 0) (MaxSize 65007) (Flag False NoAuthNoPriv) UserBasedSecurityModel initial
+    {-# INLINE initial #-}
 
 instance Construct (Header V2) where
     initial = V2Header (Community "")
+    {-# INLINE initial #-}
 
 instance Construct (PDU V3) where
     initial = ScopedPDU (ContextEngineID "") (ContextName "") initial
+    {-# INLINE initial #-}
 
 instance Construct (PDU V2) where
     initial = PDU initial initial
+    {-# INLINE initial #-}
 
 instance Construct SecurityParameter where
     initial = SecurityParameter "" 0 0 "" "" ""
+    {-# INLINE initial #-}
 
 instance Construct Suite where
     initial = Suite []
+    {-# INLINE initial #-}
 
 instance Construct Request where
-     initial = GetRequest (RequestId 0) (ErrorStatus 0) (ErrorIndex 0)
+    initial = GetRequest (RequestId 0) (ErrorStatus 0) (ErrorIndex 0)
+    {-# INLINE initial #-}
 
 ----------------------------------------------------------------------------------------
 instance HasItem V2 where
     getHeader (V2Packet _ x _) = x
     getHeader _ = undefined
+    {-# INLINE getHeader #-}
+
     setHeader h (V2Packet v _ x) = V2Packet v h x
     setHeader _ _ = undefined
+    {-# INLINE setHeader #-}
+
     getPDU (V2Packet _ _ x) = x
     getPDU _ = undefined
+    {-# INLINE getPDU #-}
+
     setPDU p (V2Packet v h _) = V2Packet v h p
     setPDU _ _ = undefined
+    {-# INLINE setPDU #-}
 
 instance HasItem V3 where
     getHeader (V3Packet _ x _) = x
     getHeader _ = undefined
+    {-# INLINE getHeader #-}
+
     setHeader h (V3Packet v _ x) = V3Packet v h x
     setHeader _ _ = undefined
+    {-# INLINE setHeader #-}
+
     getPDU (V3Packet _ _ x) = x
     getPDU _ = undefined
+    {-# INLINE getPDU #-}
+
     setPDU p (V3Packet v h _) = V3Packet v h p
     setPDU _ _ = undefined
+    {-# INLINE setPDU #-}
 
 getCommunity :: Header V2 -> Community
 getCommunity (V2Header c) = c
@@ -594,7 +619,6 @@ getPrivParametersP p =
     let header = getHeader p :: Header V3
     in privacyParameters $ getSecurityParameter header
 
-
 getVersion :: Packet -> Version
 getVersion (V2Packet v _ _) = v
 getVersion (V3Packet v _ _) = v
@@ -650,6 +674,8 @@ instance Serialize Size where
       where
         lw       = bytesOfUInt $ fromIntegral i
         lenbytes = fromIntegral (length lw .|. 0x80)
+    {-# INLINE put #-}
+
     get = do
         l1 <- fromIntegral <$> getWord8
         if testBit l1 7
@@ -662,6 +688,7 @@ instance Serialize Size where
       where
         {- uintbs return the unsigned int represented by the bytes -}
         uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
+    {-# INLINE get #-}
 
 putLength :: Putter Int
 putLength x = put (Size x)
@@ -847,6 +874,8 @@ instance Serialize Version where
     put Version1 = put (Integer 0)
     put Version2 = put (Integer 1)
     put Version3 = put (Integer 3)
+    {-# INLINE put #-}
+
     get = do
         Integer x <- get
         case x of
@@ -854,29 +883,44 @@ instance Serialize Version where
             1 -> return Version2
             3 -> return Version3
             _ -> error "10"
+    {-# INLINE get #-}
 
 instance Serialize Community where
     put (Community bs) = put (OctetString bs)
+    {-# INLINE put #-}
+
     get = do
         OctetString bs <- get
         return (Community bs)
+    {-# INLINE get #-}
 
 instance Serialize (Header V2) where
     put (V2Header c) = put c
+    {-# INLINE put #-}
+
     get = do
         c <- get
         return $ V2Header c
+    {-# INLINE get #-}
 
 instance Serialize ID where
     put (ID x) = put (Integer x)
+    {-# INLINE put #-}
+
     get = do
         Integer x <- get
         return $ ID x
+    {-# INLINE get #-}
+
 instance Serialize MaxSize where
     put (MaxSize x) = put (Integer $ fromIntegral x)
+    {-# INLINE put #-}
+
     get = do
         Integer x <- get
         return $ MaxSize $ fromIntegral x
+    {-# INLINE get #-}
+
 instance Serialize Flag where
     put (Flag r pa) = do
         let zero = zeroBits :: Word8
@@ -887,6 +931,8 @@ instance Serialize Flag where
                            AuthPriv -> setBit zero 1 .|. setBit zero 2
             flag = reportable .|. privauth
         put $ OctetString (B.pack [flag])
+    {-# INLINE put #-}
+
     get = do
         OctetString f <- get
         let [w] = B.unpack f
@@ -895,13 +941,18 @@ instance Serialize Flag where
             (False, False) -> Flag (testBit w 2) NoAuthNoPriv
             (True, False) -> Flag (testBit w 2) AuthNoPriv
             _ -> error "10" -- SnmpException 10
+    {-# INLINE get #-}
+
 instance Serialize SecurityModel where
     put UserBasedSecurityModel = put (Integer 3)
+    {-# INLINE put #-}
+
     get = do
         Integer x <- get
         case x of
             3 -> return UserBasedSecurityModel
             _ -> error "7" -- SnmpException 7
+    {-# INLINE get #-}
 
 instance Serialize SecurityParameter where
     put SecurityParameter{..} = do
@@ -915,6 +966,8 @@ instance Serialize SecurityParameter where
             put (OctetString userName)
             put (OctetString authenticationParameters)
             put (OctetString privacyParameters)
+    {-# INLINE put #-}
+
     get = do
         getTag (tag (OctetString "")) 9
         getNested getLength (getTag 0x30 9 >> getNested getLength getSecurityParameter')
@@ -933,6 +986,7 @@ instance Serialize SecurityParameter where
                                        userName'
                                        authenticationParameters'
                                        privacyParameters'
+    {-# INLINE get #-}
 
 instance Serialize (Header V3) where
     put (V3Header iD maxSize flag securityModel securityParameter) = do
@@ -945,30 +999,44 @@ instance Serialize (Header V3) where
             put maxSize
             put flag
             put securityModel
+    {-# INLINE put #-}
+
     get = do
         getTag 0x30 9
         getNested getLength (V3Header <$> get <*> get <*> get <*> get) <*> get
+    {-# INLINE get #-}
 
 instance Serialize RequestId where
     put (RequestId rid) = put (Integer $ fromIntegral rid)
+    {-# INLINE put #-}
+
     get = do
         Integer i <- get
         return $ RequestId $ fromIntegral i
+    {-# INLINE get #-}
 
 instance Serialize ErrorStatus where
     put (ErrorStatus es) = put (Integer $ fromIntegral es)
+    {-# INLINE put #-}
+
     get = do
         Integer i <- get
         return $ ErrorStatus $ fromIntegral i
+    {-# INLINE get #-}
 
 instance Serialize ErrorIndex where
     put (ErrorIndex ei) = put (Integer $ fromIntegral ei)
+    {-# INLINE put #-}
+
     get = do
         Integer i <- get
         return $ ErrorIndex $ fromIntegral i
+    {-# INLINE get #-}
 
 instance Serialize Suite where
     put (Suite bs) = putWord8 0x30 >> putNested putLength (mapM_ put bs)
+    {-# INLINE put #-}
+
     get = do
         getTag 0x30 9
         Suite <$> getNested getLength (getSuite' [])
@@ -980,17 +1048,23 @@ instance Serialize Suite where
                 else do
                     coupla <- get
                     getSuite' (coupla : xs)
+    {-# INLINE get #-}
 
 instance Serialize Coupla where
     put Coupla{..} = putWord8 0x30 >> putNested putLength (put oid >> put value)
+    {-# INLINE put #-}
+
     get = do
         getTag 0x30 9
         getNested getLength (Coupla <$> get <*> get)
+    {-# INLINE get #-}
 
 instance Serialize (PDU V2) where
     put (PDU request suite) = do
         putWord8 (tag request)
         putNested putLength (put (rid request) >> put (es request) >> put (ei request) >> put suite)
+    {-# INLINE put #-}
+
     get = do
         t <- getWord8
         let request = case t of
@@ -1004,21 +1078,31 @@ instance Serialize (PDU V2) where
                 0xa8 -> Report
                 _ -> error "9"
         getNested getLength (PDU <$> (request <$> get <*> get <*> get) <*> get)
+    {-# INLINE get #-}
 
 instance Serialize ContextEngineID where
     put (ContextEngineID bs) = put (OctetString bs)
+    {-# INLINE put #-}
+
     get = do
         OctetString bs <- get
         return (ContextEngineID bs)
+    {-# INLINE get #-}
+
 instance Serialize ContextName where
     put (ContextName bs) = put (OctetString bs)
+    {-# INLINE put #-}
+
     get = do
         OctetString bs <- get
         return (ContextName bs)
+    {-# INLINE get #-}
 
 instance Serialize (PDU V3) where
     put (ScopedPDU contextEngine contextName pduv2) = putWord8 0x30 >> putNested putLength (put contextEngine >> put contextName >> put pduv2)
     put (CryptedPDU bs) = put (OctetString bs)
+    {-# INLINE put #-}
+
     get = do
         t <- getWord8
         case t of
@@ -1027,16 +1111,20 @@ instance Serialize (PDU V3) where
                 l <- getLength
                 CryptedPDU <$> getByteString l
             _ -> error "9"
+    {-# INLINE get #-}
 
 instance Serialize Packet where
     put (V2Packet version header body) = putWord8 0x30 >> putNested putLength (put version >> put header >> put body)
     put (V3Packet version header body) = putWord8 0x30 >> putNested putLength (put version >> put header >> put body)
+    {-# INLINE put #-}
+
     get = getTag 0x30 9 >> getNested getLength getAll
       where
         getAll = get >>= getPacket
         getPacket Version1 = V2Packet Version1 <$> get <*> get
         getPacket Version2 = V2Packet Version2 <$> get <*> get
         getPacket Version3 = V3Packet Version3 <$> get <*> get
+    {-# INLINE get #-}
 
 -------------------------------------------------------------------------------------------------------------
 cleanPass :: ByteString
