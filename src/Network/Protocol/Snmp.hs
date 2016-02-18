@@ -5,7 +5,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
-module Network.Protocol.Snmp.Binary (
+module Network.Protocol.Snmp (
 -- * snmp types
   Value(..)
 -- * top level types
