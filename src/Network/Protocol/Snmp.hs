@@ -125,23 +125,23 @@ import           Data.Word
 import           GHC.Generics         (Generic)
 import           GHC.Int              (Int32, Int64)
 
-data Value = Integer Int32
-           | BitString ByteString
-           | OctetString ByteString
+data Value = Integer {-# UNPACK #-} !Int32
+           | BitString !ByteString
+           | OctetString !ByteString
            | Null
            | OI [Word16]
-           | IpAddress Word8 Word8 Word8 Word8
-           | Counter32 Word32
-           | Gauge32 Word32
-           | TimeTicks Word32
-           | Opaque ByteString
-           | NsapAddress ByteString
-           | Counter64 Word64
-           | Uinteger32 Int32
+           | IpAddress {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8
+           | Counter32 {-# UNPACK #-} !Word32
+           | Gauge32 {-# UNPACK #-} !Word32
+           | TimeTicks {-# UNPACK #-} !Word32
+           | Opaque !ByteString
+           | NsapAddress !ByteString
+           | Counter64 {-# UNPACK #-} !Word64
+           | Uinteger32 {-# UNPACK #-} !Word32
            | NoSuchObject
            | NoSuchInstance
            | EndOfMibView
-           deriving (Eq, Show, Ord, Generic)
+  deriving (Eq, Show, Ord, Generic)
 
 type Tag = Word8
 
@@ -187,15 +187,12 @@ data V3
 data Version = Version1
              | Version2
              | Version3
-             deriving (Eq, Ord, Show)
 
 -- | Top level type, which describe snmp packet
 data Packet where
   V2Packet :: Version -> Header V2 -> PDU V2 -> Packet
   V3Packet :: Version -> Header V3 -> PDU V3 -> Packet
-
-deriving instance Show Packet
-deriving instance Eq Packet
+  deriving (Show, Eq, Generic)
 
 -- | Snmp header without version tag
 data Header a where
@@ -218,25 +215,25 @@ deriving instance Eq (PDU a)
 newtype RequestId = RequestId Int32 deriving (Show, Eq, Ord)
 
 -- | Error status
-newtype ErrorStatus = ErrorStatus Integer deriving (Show, Eq, Ord)
+newtype ErrorStatus = ErrorStatus Int deriving (Show, Eq, Ord)
 
 -- | Error index
-newtype ErrorIndex = ErrorIndex Integer deriving (Show, Eq, Ord)
+newtype ErrorIndex = ErrorIndex Int deriving (Show, Eq, Ord)
 
 -- | requests
-data Request = GetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-             | GetNextRequest { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-             | GetResponse    { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-             | SetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-             | GetBulk        { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-             | Inform         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-             | V2Trap         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-             | Report         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-             deriving (Show, Ord, Eq)
+data Request = GetRequest     { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
+             | GetNextRequest { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
+             | GetResponse    { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
+             | SetRequest     { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
+             | GetBulk        { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
+             | Inform         { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
+             | V2Trap         { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
+             | Report         { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
+             deriving (Show, Ord, Eq, Generic)
 
 -- | Coupla oid -> value
 data Coupla = Coupla { oid :: !Value, value :: !Value }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic)
 
 -- | Variable bindings
 newtype Suite = Suite [Coupla] deriving (Eq, Monoid, Show)
@@ -263,7 +260,7 @@ data PrivAuth = NoAuthNoPriv | AuthNoPriv | AuthPriv
 type Reportable = Bool
 
 -- | (snmp3 only) rfc3412, message flag
-data Flag = Flag Reportable PrivAuth
+data Flag = Flag !Reportable !PrivAuth
   deriving (Show, Eq, Ord)
 
 -- | (snmp3 only) rfc3412, security model
@@ -272,14 +269,14 @@ data SecurityModel = UserBasedSecurityModel
 
 -- | (snmp3 only) rfc3412, security parameter
 data SecurityParameter = SecurityParameter
-  { authoritiveEngineId      :: ByteString
-  , authoritiveEngineBoots   :: Int32
-  , authoritiveEngineTime    :: Int32
-  , userName                 :: ByteString
-  , authenticationParameters :: ByteString
-  , privacyParameters        :: ByteString
-  }
-  deriving (Eq, Ord, Show)
+    { authoritiveEngineId      :: !ByteString
+    , authoritiveEngineBoots   :: {-# UNPACK #-} !Int32
+    , authoritiveEngineTime    :: {-# UNPACK #-} !Int32
+    , userName                 :: !ByteString
+    , authenticationParameters :: !ByteString
+    , privacyParameters        :: !ByteString
+    }
+  deriving (Eq, Ord, Show, Generic)
 
 -- | (snmp3 only) rfc3412, types for ScopedPDU
 newtype ContextEngineID = ContextEngineID ByteString
