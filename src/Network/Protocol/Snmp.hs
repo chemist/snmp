@@ -104,13 +104,7 @@ module Network.Protocol.Snmp (
 -- * usage example
 -- $example
 ) where
-import           Data.Serialize
-import           Data.Typeable        (Typeable)
 import           Control.Exception    (Exception, throw)
-import           Data.Bits
-import           Data.ByteString      (ByteString)
-import qualified Data.ByteString      as B
-import           Data.Word
 import           Control.Monad
 import qualified Crypto.Cipher.AES    as Priv
 import qualified Crypto.Cipher.DES    as Priv
@@ -118,10 +112,16 @@ import qualified Crypto.Cipher.Types  as Priv
 import qualified Crypto.Error         as Priv
 import qualified Crypto.Hash          as Hash
 import qualified Crypto.MAC.HMAC      as HMAC
+import           Data.Bits
 import qualified Data.ByteArray       as BA
+import           Data.ByteString      (ByteString)
+import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as BL
 import           Data.List            (unfoldr)
 import           Data.Monoid          ((<>))
+import           Data.Serialize
+import           Data.Typeable        (Typeable)
+import           Data.Word
 import           GHC.Generics         (Generic)
 import           GHC.Int              (Int32, Int64)
 
@@ -628,9 +628,7 @@ type ErrorCode = Int
 getTag :: Tag -> ErrorCode -> Get ()
 getTag x e = do
     t <- getWord8
-    if t /= x
-       then error $ show e
-       else return ()
+    when (t /= x) $ error $ show e
 
 putIntegral :: (Tags b, Integral a) => b -> a -> Put
 putIntegral v a = do
@@ -899,7 +897,7 @@ instance Serialize (Header V3) where
             put securityModel
     get = do
         getTag 0x30 9
-        (getNested getLength (V3Header <$> get <*> get <*> get <*> get)) <*> get
+        getNested getLength (V3Header <$> get <*> get <*> get <*> get) <*> get
 
 instance Serialize RequestId where
     put (RequestId rid) = put (Integer $ fromIntegral rid)
@@ -1001,16 +999,16 @@ type Key = ByteString
 type Password = ByteString
 
 hash :: (BA.ByteArray a) => AuthType -> ByteString -> a
-hash MD5 bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.MD5)
-hash SHA bs = BA.convert $ (Hash.hash bs :: Hash.Digest Hash.SHA1)
+hash MD5 bs = BA.convert (Hash.hash bs :: Hash.Digest Hash.MD5)
+hash SHA bs = BA.convert (Hash.hash bs :: Hash.Digest Hash.SHA1)
 
 hashlazy :: (BA.ByteArray a) => AuthType -> BL.ByteString -> a
-hashlazy MD5 bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
-hashlazy SHA bs = BA.convert $ (Hash.hashlazy bs :: Hash.Digest Hash.SHA1)
+hashlazy MD5 bs = BA.convert (Hash.hashlazy bs :: Hash.Digest Hash.MD5)
+hashlazy SHA bs = BA.convert (Hash.hashlazy bs :: Hash.Digest Hash.SHA1)
 
 hmac :: (BA.ByteArrayAccess key, BA.ByteArray msg) => AuthType -> key -> msg -> ByteString
-hmac MD5 key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.MD5)
-hmac SHA key msg = BA.convert $ (HMAC.hmac key msg :: HMAC.HMAC Hash.SHA1)
+hmac MD5 key msg = BA.convert (HMAC.hmac key msg :: HMAC.HMAC Hash.MD5)
+hmac SHA key msg = BA.convert (HMAC.hmac key msg :: HMAC.HMAC Hash.SHA1)
 
 -- | (only V3) sign Packet
 signPacket :: AuthType -> Key -> Packet -> Packet
