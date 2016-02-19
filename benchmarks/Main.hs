@@ -49,6 +49,3 @@ packUnpack v = decode (encode (initial v :: Packet))
 -- 
 -- lstr :: L.ByteString
 -- lstr = "asdfasdfasdfasdgasdlgkjasdfoasjpojvpajsdpofijaspoifdjapsodijfpaosdijfpoasjdfpoiasdfjasoidjfpasfij"
-
-packUnpack :: Version -> Either String Packet
-packUnpack v = decode (encode (initial v :: Packet))

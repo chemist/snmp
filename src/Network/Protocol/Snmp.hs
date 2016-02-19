@@ -17,7 +17,7 @@ module Network.Protocol.Snmp
     , Version(..)
     , Packet
     -- ** header
-    , Header
+    , Header(..)
     -- *** header snmpV2
     , Community(..)
     -- *** header snmpV3
