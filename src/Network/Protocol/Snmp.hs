@@ -246,10 +246,10 @@ deriving instance Eq (PDU a)
 newtype RequestId = RequestId Int32 deriving (Show, Eq, Ord)
 
 -- | Error status
-newtype ErrorStatus = ErrorStatus Int deriving (Show, Eq, Ord)
+newtype ErrorStatus = ErrorStatus Int32 deriving (Show, Eq, Ord)
 
 -- | Error index
-newtype ErrorIndex = ErrorIndex Int deriving (Show, Eq, Ord)
+newtype ErrorIndex = ErrorIndex Int32 deriving (Show, Eq, Ord)
 
 -- | requests
 data Request
