@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -667,11 +668,11 @@ newtype Size = Size Int deriving (Eq, Show, Ord)
 
 instance Serialize Size where
     put (Size i)
-        | i >= 0 && i <= 0x7f         = mapM_ putWord8 [fromIntegral i]
-        | i < 0     = error "8"
-        | otherwise = mapM_ putWord8 $ lenbytes : lw
+        | i >= 0 && i <= 0x7f         = putWord8 (fromIntegral i)
+        | i < 0     = fail "8"
+        | otherwise = mapM_ putWord8 (lenbytes : lw)
       where
-        lw       = bytesOfUInt $ fromIntegral i
+        lw       = bytesOfUInt (fromIntegral i)
         lenbytes = fromIntegral (length lw .|. 0x80)
     {-# INLINE put #-}
 
@@ -679,18 +680,16 @@ instance Serialize Size where
         l1 <- fromIntegral <$> getWord8
         if testBit l1 7
             then case clearBit l1 7 of
-                     0   -> return $ Size 0
-                     len -> do
-                         lw <- getBytes len
-                         return . Size $ uintbs lw
-            else return $ Size l1
+                     0   -> return (Size 0)
+                     len -> Size . uintbs <$> getBytes len
+            else return (Size l1)
       where
         {- uintbs return the unsigned int represented by the bytes -}
         uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
     {-# INLINE get #-}
 
 putLength :: Putter Int
-putLength x = put (Size x)
+putLength = put . Size
 
 getLength :: Get Int
 getLength = do
@@ -705,23 +704,13 @@ type ErrorCode = Int
 getTag :: Tag -> ErrorCode -> Get ()
 getTag x e = do
     t <- getWord8
-    when (t /= x) $ error $ show e
+    when (t /= x) $ fail (show e)
 
 putIntegral :: (Tags b, Integral a) => b -> a -> Put
-putIntegral v a = do
-    putTag v
-    putLength (length bytes)
-    mapM_ putWord8 bytes
-  where
-    bytes = bytesOfInt (fromIntegral a)
+putIntegral v = putBytes v . bytesOfInt . fromIntegral
 
 putIntegralU :: (Tags b, Integral a) => b -> a -> Put
-putIntegralU v a = do
-    putTag v
-    putLength (length bytes)
-    mapM_ putWord8 bytes
-  where
-    bytes = bytesOfUInt (fromIntegral a)
+putIntegralU v = putBytes v . bytesOfUInt . fromIntegral
 
 putBS :: Value -> ByteString -> Put
 putBS v bs = do
@@ -732,6 +721,12 @@ putBS v bs = do
 putZero :: Tags v => v -> Put
 putZero v = putTag v >> putWord8 0
 
+putBytes :: (Tags v, Foldable l) => v -> l Word8 -> Put
+putBytes v bytes = do
+    putTag v
+    putLength (length bytes)
+    mapM_ putWord8 bytes
+
 instance Serialize Value where
     put v@(Integer i) = putIntegral v i
     put v@(BitString bs) = putBS v bs
@@ -741,16 +736,13 @@ instance Serialize Value where
         case oids of
             (oid1:oid2:suboids) -> do
                 let eoidclass = fromIntegral (oid1 * 40 + oid2)
-                    bs = B.cons eoidclass $ B.concat $ map encode' suboids
+                    bs = (B.cons eoidclass . B.concat . map encode') suboids
                 putBS v bs
-            _ -> error "put oi"
+            _ -> fail "put oi"
       where
         encode' 0 = B.singleton 0
         encode' x = putVarEncodingIntegral x
-    put v@(IpAddress a b c d) = do
-        putTag v
-        putWord8 4
-        putWord8 a >> putWord8 b >> putWord8 c >> putWord8 d
+    put v@(IpAddress a b c d) = putBytes v [a, b, c, d]
     put v@(Counter32 i) = putIntegralU v i
     put v@(Gauge32 i) = putIntegralU v i
     put v@(TimeTicks i) = putIntegralU v i
@@ -761,7 +753,7 @@ instance Serialize Value where
     put v@NoSuchObject = putZero v
     put v@NoSuchInstance = putZero v
     put v@EndOfMibView = putZero v
-    -- {-# INLINE put #-}
+    {-# INLINE put #-}
 
     get = do
         t <- getWord8
@@ -822,49 +814,64 @@ instance Serialize Value where
             0x80 -> void getWord8 *> return NoSuchObject
             0x81 -> void getWord8 *> return NoSuchInstance
             0x82 -> void getWord8 *> return EndOfMibView
-            _ -> error "9"
-    -- {-# INLINE get #-}
+            _ -> fail "9"
+    {-# INLINE get #-}
 
 {- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
-uintOfBytes :: ByteString -> (Int, Integer)
+uintOfBytes :: ByteString -> (Int, Int)
 uintOfBytes b = (B.length b, B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0 b)
 
 --bytesOfUInt i = B.unfoldr (\x -> if x == 0 then Nothing else Just (fromIntegral (x .&. 0xff), x `shiftR` 8)) i
-bytesOfUInt :: Integer -> [Word8]
+bytesOfUInt :: Int -> [Word8]
 bytesOfUInt x = reverse (list x)
   where
-    list i = if i <= 0xff then [fromIntegral i] else (fromIntegral i .&. 0xff) : list (i `shiftR` 8)
+    list i = if i <= 0xff
+             then [fromIntegral i]
+             else (fromIntegral i .&. 0xff) : list (i `shiftR` 8)
 
 {- | intOfBytes returns the number of bytes in the list and
    the represented integer by a two's completement list of bytes -}
-intOfBytes :: ByteString -> (Int, Integer)
+intOfBytes :: ByteString -> (Int, Int)
 intOfBytes b
-    | B.length b == 0   = (0, 0)
-    | otherwise         = (len, if isNeg then -(maxIntLen - v + 1) else v)
+    | B.length b == 0 = (0, 0)
+    | otherwise       = (len, if isNeg then -(maxIntLen - v + 1) else v)
   where
     (len, v)  = uintOfBytes b
     maxIntLen = 2 ^ (8 * len) - 1
     isNeg     = testBit (B.head b) 7
 
 {- | bytesOfInt convert an integer into a two's completemented list of bytes -}
-bytesOfInt :: Integer -> [Word8]
+bytesOfInt :: Int -> [Word8]
 bytesOfInt i
-    | i > 0      = if testBit (head uints) 7 then 0 : uints else uints
-    | i == 0     = [0]
+    | i > 0  = if testBit (head uints) 7 then 0 : uints else uints
+    | i == 0 = [0]
     | otherwise  = if testBit (head nints) 7 then nints else 0xff : nints
   where
     uints = bytesOfUInt (abs i)
-    nints = reverse $ plusOne $ reverse $ map complement uints
+    nints = reverse . plusOne . reverse . map complement $ uints
     plusOne []     = [1]
     plusOne (x:xs) = if x == 0xff then 0 : plusOne xs else (x+1) : xs
 
 putVarEncodingIntegral :: (Bits i, Integral i) => i -> ByteString
 putVarEncodingIntegral i = B.reverse $ B.unfoldr genOctets (i,True)
-  where genOctets (x,first)
-            | x > 0     =
-                let out = fromIntegral (x .&. 0x7F) .|. (if first then 0 else 0x80)
-                 in Just (out, (shiftR x 7, False))
-            | otherwise = Nothing
+  where
+    genOctets (x,first)
+        | x > 0     =
+            let out = fromIntegral (x .&. 0x7F) .|. (if first then 0 else 0x80)
+             in Just (out, (shiftR x 7, False))
+        | otherwise = Nothing
+
+------
+getInteger :: Get Int32
+getInteger = get >>= \case
+    (Integer i) -> return i
+    _ -> fail "7"
+
+getOctetString :: Get ByteString
+getOctetString = get >>= \case
+    (OctetString os) -> return os
+    _ -> fail "7"
+------
 
 instance Serialize Version where
     put Version1 = put (Integer 0)
@@ -872,53 +879,44 @@ instance Serialize Version where
     put Version3 = put (Integer 3)
     {-# INLINE put #-}
 
-    get = do
-        Integer x <- get
-        case x of
-            0 -> return Version1
-            1 -> return Version2
-            3 -> return Version3
-            _ -> error "10"
+    get = getInteger >>= toVersion
+      where
+        toVersion 0 = return Version1
+        toVersion 1 = return Version2
+        toVersion 3 = return Version3
+        toVersion _ = fail "10"
     {-# INLINE get #-}
 
 instance Serialize Community where
     put (Community bs) = put (OctetString bs)
     {-# INLINE put #-}
 
-    get = do
-        OctetString bs <- get
-        return (Community bs)
+    get = Community <$> getOctetString
     {-# INLINE get #-}
 
 instance Serialize (Header V2) where
     put (V2Header c) = put c
     {-# INLINE put #-}
 
-    get = do
-        c <- get
-        return $ V2Header c
+    get = V2Header <$> get
     {-# INLINE get #-}
 
 instance Serialize ID where
     put (ID x) = put (Integer x)
     {-# INLINE put #-}
 
-    get = do
-        Integer x <- get
-        return $ ID x
+    get = ID <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize MaxSize where
     put (MaxSize x) = put (Integer $ fromIntegral x)
     {-# INLINE put #-}
 
-    get = do
-        Integer x <- get
-        return $ MaxSize $ fromIntegral x
+    get = MaxSize . fromIntegral <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize Flag where
-    put (Flag r pa) = do
+    put (Flag r pa) =
         let zero = zeroBits :: Word8
             reportable = if r then setBit zero 0 else zero
             privauth = case pa of
@@ -926,28 +924,32 @@ instance Serialize Flag where
                            AuthNoPriv -> setBit zero 2
                            AuthPriv -> setBit zero 1 .|. setBit zero 2
             flag = reportable .|. privauth
-        put $ OctetString (B.pack [flag])
+         in put $ OctetString (B.pack [flag])
     {-# INLINE put #-}
 
-    get = do
-        OctetString f <- get
-        let [w] = B.unpack f
-        return $ case (testBit w 0, testBit w 1) of
-            (True, True) -> Flag (testBit w 2) AuthPriv
-            (False, False) -> Flag (testBit w 2) NoAuthNoPriv
-            (True, False) -> Flag (testBit w 2) AuthNoPriv
-            _ -> error "10" -- SnmpException 10
+    get = getOctetString >>= toFlag
+      where
+        toFlag f
+            | B.length f /= 1 = fail "10"
+            | otherwise =
+                let [w] = B.unpack f
+                    reportable = testBit w 2
+                    flag = Flag reportable
+                 in case (testBit w 0, testBit w 1) of
+                        (True, True) -> return $ flag AuthPriv
+                        (False, False) -> return $ flag NoAuthNoPriv
+                        (True, False) -> return $ flag AuthNoPriv
+                        _ -> fail "10" -- SnmpException 10
     {-# INLINE get #-}
 
 instance Serialize SecurityModel where
     put UserBasedSecurityModel = put (Integer 3)
     {-# INLINE put #-}
 
-    get = do
-        Integer x <- get
-        case x of
-            3 -> return UserBasedSecurityModel
-            _ -> error "7" -- SnmpException 7
+    get = getInteger >>= toSecurityModel
+      where
+        toSecurityModel 3 = return UserBasedSecurityModel
+        toSecurityModel _ = fail "7" -- SnmpException 7
     {-# INLINE get #-}
 
 instance Serialize SecurityParameter where
@@ -969,19 +971,13 @@ instance Serialize SecurityParameter where
         getNested getLength (getTag 0x30 9 >> getNested getLength getSecurityParameter')
       where
         getSecurityParameter' :: Get SecurityParameter
-        getSecurityParameter' = do
-            OctetString authoritiveEngineId' <- get
-            Integer authoritiveEngineBoots' <- get
-            Integer authoritiveEngineTime' <- get
-            OctetString userName' <- get
-            OctetString authenticationParameters' <- get
-            OctetString privacyParameters' <- get
-            return $ SecurityParameter authoritiveEngineId'
-                                       (fromIntegral authoritiveEngineBoots')
-                                       (fromIntegral authoritiveEngineTime')
-                                       userName'
-                                       authenticationParameters'
-                                       privacyParameters'
+        getSecurityParameter' = SecurityParameter
+                              <$> getOctetString
+                              <*> (fromIntegral <$> getInteger)
+                              <*> (fromIntegral <$> getInteger)
+                              <*> getOctetString
+                              <*> getOctetString
+                              <*> getOctetString
     {-# INLINE get #-}
 
 instance Serialize (Header V3) where
@@ -1006,27 +1002,21 @@ instance Serialize RequestId where
     put (RequestId rid) = put (Integer $ fromIntegral rid)
     {-# INLINE put #-}
 
-    get = do
-        Integer i <- get
-        return $ RequestId $ fromIntegral i
+    get = RequestId <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize ErrorStatus where
     put (ErrorStatus es) = put (Integer $ fromIntegral es)
     {-# INLINE put #-}
 
-    get = do
-        Integer i <- get
-        return $ ErrorStatus $ fromIntegral i
+    get = ErrorStatus <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize ErrorIndex where
     put (ErrorIndex ei) = put (Integer $ fromIntegral ei)
     {-# INLINE put #-}
 
-    get = do
-        Integer i <- get
-        return $ ErrorIndex $ fromIntegral i
+    get = ErrorIndex <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize Suite where
@@ -1072,7 +1062,7 @@ instance Serialize (PDU V2) where
                 0xa6 -> Inform
                 0xa7 -> V2Trap
                 0xa8 -> Report
-                _ -> error "9"
+                _ -> fail "9"
         getNested getLength (PDU <$> (request <$> get <*> get <*> get) <*> get)
     {-# INLINE get #-}
 
@@ -1080,18 +1070,14 @@ instance Serialize ContextEngineID where
     put (ContextEngineID bs) = put (OctetString bs)
     {-# INLINE put #-}
 
-    get = do
-        OctetString bs <- get
-        return (ContextEngineID bs)
+    get = ContextEngineID <$> getOctetString
     {-# INLINE get #-}
 
 instance Serialize ContextName where
     put (ContextName bs) = put (OctetString bs)
     {-# INLINE put #-}
 
-    get = do
-        OctetString bs <- get
-        return (ContextName bs)
+    get = ContextName <$> getOctetString
     {-# INLINE get #-}
 
 instance Serialize (PDU V3) where
@@ -1106,7 +1092,7 @@ instance Serialize (PDU V3) where
             0x04 -> do
                 l <- getLength
                 CryptedPDU <$> getByteString l
-            _ -> error "9"
+            _ -> fail "9"
     {-# INLINE get #-}
 
 instance Serialize Packet where
@@ -1153,9 +1139,9 @@ signPacket at (Key key) packet =
 -- | create auth key from password and context engine id
 passwordToKey :: AuthType -> Password -> EngineId -> Key
 passwordToKey at (Password pass) eid =
-  let buf = BL.take 1048576 $ BL.fromChunks $ repeat pass
+  let buf = (BL.take 1048576 . BL.fromChunks . repeat) pass
       authKey = hashlazy at buf
-  in Key . hash at $ authKey <> eid <> authKey
+  in Key $ hash at (authKey <> eid <> authKey)
 
 -----------------------------------------------------------------------------------------------------
 
@@ -1194,26 +1180,26 @@ aesEncrypt (Key privKey) engineBoot engineTime rcounter dataToEncrypt =
 
 wToBs :: Int64 -> ByteString
 wToBs x = B.pack
-    [ fromIntegral $! x `shiftR` 56 .&. 0xff
-    , fromIntegral $! x `shiftR` 48 .&. 0xff
-    , fromIntegral $! x `shiftR` 40 .&. 0xff
-    , fromIntegral $! x `shiftR` 32 .&. 0xff
-    , fromIntegral $! x `shiftR` 24 .&. 0xff
-    , fromIntegral $! x `shiftR` 16 .&. 0xff
-    , fromIntegral $! x `shiftR` 8 .&. 0xff
-    , fromIntegral $! x `shiftR` 0 .&. 0xff
+    [ fromIntegral (x `shiftR` 56 .&. 0xff)
+    , fromIntegral (x `shiftR` 48 .&. 0xff)
+    , fromIntegral (x `shiftR` 40 .&. 0xff)
+    , fromIntegral (x `shiftR` 32 .&. 0xff)
+    , fromIntegral (x `shiftR` 24 .&. 0xff)
+    , fromIntegral (x `shiftR` 16 .&. 0xff)
+    , fromIntegral (x `shiftR` 8 .&. 0xff)
+    , fromIntegral (x `shiftR` 0 .&. 0xff)
     ]
 
 toSalt :: Int32 -> Int32 -> ByteString
 toSalt x y = B.pack
-    [ fromIntegral $! x `shiftR` 24 .&. 0xff
-    , fromIntegral $! x `shiftR` 16 .&. 0xff
-    , fromIntegral $! x `shiftR`  8 .&. 0xff
-    , fromIntegral $! x `shiftR`  0 .&. 0xff
-    , fromIntegral $! y `shiftR` 24 .&. 0xff
-    , fromIntegral $! y `shiftR` 16 .&. 0xff
-    , fromIntegral $! y `shiftR`  8 .&. 0xff
-    , fromIntegral $! y `shiftR`  0 .&. 0xff
+    [ fromIntegral (x `shiftR` 24 .&. 0xff)
+    , fromIntegral (x `shiftR` 16 .&. 0xff)
+    , fromIntegral (x `shiftR`  8 .&. 0xff)
+    , fromIntegral (x `shiftR`  0 .&. 0xff)
+    , fromIntegral (y `shiftR` 24 .&. 0xff)
+    , fromIntegral (y `shiftR` 16 .&. 0xff)
+    , fromIntegral (y `shiftR`  8 .&. 0xff)
+    , fromIntegral (y `shiftR`  0 .&. 0xff)
     ]
 
 desDecrypt :: Key -> Salt -> Encrypted -> Raw
@@ -1239,7 +1225,7 @@ aesDecrypt (Key privKey) salt engineBoot engineTime dataToDecrypt =
 stripBS :: ByteString -> ByteString
 stripBS bs =
     let bs' = B.drop 1 bs
-        l1 = fromIntegral $ B.head bs'
+        l1 = fromIntegral (B.head bs')
     in if testBit l1 7
         then case clearBit l1 7 of
                   0   -> throw $ SnmpException (ErrorStatus 12)
