@@ -21,13 +21,10 @@ library
   -- other-extensions:
   build-depends:       base >=4.6 && <5,
                        bytestring,
-                       mtl,
-                       containers,
                        cereal,
                        cryptonite,
---                        cryptohash,
---                        criterion,
                        memory
+--                        cryptohash,
   hs-source-dirs:      src
   ghc-options: -Wall -O2
   ghc-prof-options: -fprof-auto -fprof-cafs
