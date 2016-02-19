@@ -8,7 +8,8 @@
 module Network.Protocol.Snmp
     (
     -- * snmp types
-      Value(..)
+      OID
+    , Value(..)
     -- * top level types
     , V1
     , V2
@@ -153,12 +154,13 @@ import           Data.Word
 import           GHC.Generics         (Generic)
 import           GHC.Int              (Int32, Int64)
 
+type OID = [Word16]
 data Value
     = Integer {-# UNPACK #-} !Int32
     | BitString !ByteString
     | OctetString !ByteString
     | Null
-    | OI [Word16]
+    | OI OID
     | IpAddress {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8
     | Counter32 {-# UNPACK #-} !Word32
     | Gauge32 {-# UNPACK #-} !Word32
