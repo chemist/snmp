@@ -52,7 +52,7 @@ benchmark bench
   type: exitcode-stdio-1.0
   hs-source-dirs: benchmarks
   main-is: Main.hs
-  ghc-options: -Wall -rtsopts -fno-warn-missing-signatures -fno-enable-rewrite-rules 
+  ghc-options: -Wall -rtsopts -O2 -fsimpl-tick-factor=2000
   build-depends:  base >=4.6 && <5,
                   snmp,
                   criterion,
