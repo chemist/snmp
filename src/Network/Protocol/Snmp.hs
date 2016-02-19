@@ -11,7 +11,6 @@ module Network.Protocol.Snmp
       OID
     , Value(..)
     -- * top level types
-    , V1
     , V2
     , V3
     , Version(..)
@@ -209,8 +208,6 @@ instance Tags Request where
     tag Report{} = 0xa8
     {-# INLINE tag #-}
 
--- | Phantom type for version 1 (Header V2, PDU V2)
-data V1
 -- | Phantom type for version 2 (Header V2, PDU V2)
 data V2
 -- | Phantom type for version 3 (Header V3, PDU V3)
