@@ -14,7 +14,7 @@ module Network.Protocol.Snmp (
 , Version(..)
 , Packet
 -- ** header
-, Header
+, Header(..)
 -- *** header snmpV2
 , Community(..)
 -- *** header snmpV3
@@ -706,7 +706,6 @@ instance Serialize Value where
                  Size l <- get
                  OctetString <$> getByteString l
              0x05 -> do
-                 Size _ <- get
                  0 <- getWord8
                  return Null
              0x06 -> do
