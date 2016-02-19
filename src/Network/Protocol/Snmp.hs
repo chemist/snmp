@@ -753,7 +753,7 @@ instance Serialize Value where
     put v@NoSuchObject = putZero v
     put v@NoSuchInstance = putZero v
     put v@EndOfMibView = putZero v
-    {-# INLINE put #-}
+    -- {-# INLINE put #-}
 
     get = do
         t <- getWord8
@@ -814,7 +814,7 @@ instance Serialize Value where
             0x81 -> void getWord8 *> return NoSuchInstance
             0x82 -> void getWord8 *> return EndOfMibView
             _ -> fail "9"
-    {-# INLINE get #-}
+    -- {-# INLINE get #-}
 
 {- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
 uintOfBytes :: ByteString -> (Int, Int)
