@@ -23,7 +23,6 @@ library
                        bytestring,
                        mtl,
                        containers,
-                       binary,
                        cereal,
                        cryptonite,
 --                        cryptohash,

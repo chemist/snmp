@@ -10,7 +10,6 @@ import Data.Serialize
 -- import Data.ByteString (ByteString)
 -- import qualified Data.ByteString.Lazy as L
 
-
 main :: IO ()
 main = defaultMain
   [ bgroup "new"
@@ -51,3 +50,5 @@ packUnpack v = decode (encode (initial v :: Packet))
 -- lstr :: L.ByteString
 -- lstr = "asdfasdfasdfasdgasdlgkjasdfoasjpojvpajsdpofijaspoifdjapsodijfpaosdijfpoasjdfpoiasdfjasoidjfpasfij"
 
+packUnpack :: Version -> Either String Packet
+packUnpack v = decode (encode (initial v :: Packet))
