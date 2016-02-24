@@ -15,7 +15,7 @@ module Network.Protocol.Snmp
     , V2
     , V3
     , Version(..)
-    , Packet
+    , Packet(..)
     -- ** header
     , Header(..)
     -- *** header snmpV2
@@ -24,6 +24,9 @@ module Network.Protocol.Snmp
     , ID(..)
     , MaxSize(..)
     , Flag(..)
+    , ErrorIndex(..)
+    , ErrorStatus(..)
+    , RequestId(..)
     , SecurityModel(..)
     , SecurityParameter(..)
     , Reportable
@@ -33,12 +36,9 @@ module Network.Protocol.Snmp
     , EngineTime
     , EngineId
     -- ** PDU
-    , PDU (CryptedPDU)
+    , PDU (..)
     -- *** PDU universal
     , Request(..)
-    , RequestId
-    , ErrorStatus
-    , ErrorIndex
     , Suite(..)
     , Coupla(..)
     -- *** PDU snmpV3
@@ -146,7 +146,7 @@ import qualified Data.ByteArray       as BA
 import           Data.ByteString      (ByteString)
 import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as BL
-import           Data.List            (unfoldr)
+import           Data.List            (sort, unfoldr)
 import           Data.Monoid          ((<>))
 import           Data.Serialize
 import           Data.Typeable        (Typeable)
@@ -269,7 +269,10 @@ data Coupla = Coupla { oid :: !Value, value :: !Value }
   deriving (Eq, Ord, Show, Generic)
 
 -- | Variable bindings
-newtype Suite = Suite [Coupla] deriving (Eq, Monoid, Show)
+newtype Suite = Suite [Coupla] deriving (Monoid, Show)
+
+instance Eq Suite where
+    (==) (Suite a) (Suite b) = sort a == sort b
 
 -- ** Types describing header
 
@@ -914,6 +917,7 @@ instance Serialize MaxSize where
     get = MaxSize . fromIntegral <$> getInteger
     {-# INLINE get #-}
 
+-- [ 0 - Reportable | 1 - Priv | 2 - Auth | _ | _ | _ | _ | _ ] - bits
 instance Serialize Flag where
     put (Flag r pa) =
         let zero = zeroBits :: Word8
@@ -932,12 +936,12 @@ instance Serialize Flag where
             | B.length f /= 1 = fail "10"
             | otherwise =
                 let [w] = B.unpack f
-                    reportable = testBit w 2
+                    reportable = testBit w 0
                     flag = Flag reportable
-                 in case (testBit w 0, testBit w 1) of
+                 in case (testBit w 1, testBit w 2) of
                         (True, True) -> return $ flag AuthPriv
                         (False, False) -> return $ flag NoAuthNoPriv
-                        (True, False) -> return $ flag AuthNoPriv
+                        (False, True) -> return $ flag AuthNoPriv
                         _ -> fail "10" -- SnmpException 10
     {-# INLINE get #-}
 
