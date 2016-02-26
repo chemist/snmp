@@ -21,7 +21,7 @@ library
   -- other-extensions:
   build-depends:       base >=4.6 && <5,
                        bytestring,
-                       cereal,
+                       cereal >= 0.5.0.0,
                        cryptonite,
                        memory
 --                        cryptohash,
