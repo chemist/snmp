@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -9,7 +8,7 @@
 module Network.Protocol.Snmp
     (
     -- * snmp types
-      OID
+      Oid(..)
     , Value(..)
     -- * top level types
     , V2
@@ -113,8 +112,8 @@ module Network.Protocol.Snmp
     , signPacket
     , AuthType(..)
     , PrivType(..)
-    , Password
-    , Key
+    , Password(..)
+    , Key(..)
     , cleanPass
     -- * priv
     , Salt
@@ -151,63 +150,32 @@ import           Data.Monoid          ((<>))
 import           Data.Serialize
 import           Data.Typeable        (Typeable)
 import           Data.Word
-import           GHC.Generics         (Generic)
 import           GHC.Int              (Int32, Int64)
 
-type OID = [Word16]
+newtype Oid = Oid [Word16]
+  deriving (Eq, Ord, Show)
+
 data Value
     = Integer {-# UNPACK #-} !Int32
     | BitString !ByteString
     | OctetString !ByteString
     | Null
-    | OI OID
-    | IpAddress {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8 {-# UNPACK #-} !Word8
+    | OI !Oid
+    | IpAddress {-# UNPACK #-} !Word8
+                {-# UNPACK #-} !Word8
+                {-# UNPACK #-} !Word8
+                {-# UNPACK #-} !Word8
     | Counter32 {-# UNPACK #-} !Word32
     | Gauge32 {-# UNPACK #-} !Word32
     | TimeTicks {-# UNPACK #-} !Word32
     | Opaque !ByteString
     | NsapAddress !ByteString
     | Counter64 {-# UNPACK #-} !Word64
-    | Uinteger32 {-# UNPACK #-} !Word32
+    | UInteger32 {-# UNPACK #-} !Word32
     | NoSuchObject
     | NoSuchInstance
     | EndOfMibView
-  deriving (Eq, Show, Ord, Generic)
-
-type Tag = Word8
-
-class Tags a where
-    tag :: a -> Tag
-
-instance Tags Value where
-    tag (Integer _) = 0x02
-    tag (BitString _) = 0x03
-    tag (OctetString _) = 0x04
-    tag Null = 0x05
-    tag (OI _) = 0x06
-    tag IpAddress{} =  0x40
-    tag (Counter32 _) = 0x41
-    tag (Gauge32 _) = 0x42
-    tag (TimeTicks _) = 0x43
-    tag (Opaque _) = 0x44
-    tag (NsapAddress _) = 0x45
-    tag (Counter64 _) = 0x46
-    tag (Uinteger32 _) = 0x47
-    tag NoSuchObject = 0x80
-    tag NoSuchInstance = 0x81
-    tag EndOfMibView = 0x82
-    {-# INLINE tag #-}
-
-instance Tags Request where
-    tag GetRequest{} = 0xa0
-    tag GetNextRequest{} = 0xa1
-    tag GetResponse{} = 0xa2
-    tag SetRequest{} = 0xa3
-    tag GetBulk{} = 0xa5
-    tag Inform{} = 0xa6
-    tag V2Trap{} = 0xa7
-    tag Report{} = 0xa8
-    {-# INLINE tag #-}
+  deriving (Eq, Ord, Show)
 
 -- | Phantom type for version 2 (Header V2, PDU V2)
 data V2
@@ -218,13 +186,13 @@ data V3
 data Version = Version1
              | Version2
              | Version3
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Show)
 
 -- | Top level type, which describe snmp packet
 data Packet where
     V2Packet :: Version -> Header V2 -> PDU V2 -> Packet
     V3Packet :: Version -> Header V3 -> PDU V3 -> Packet
-  deriving (Show, Eq, Generic)
+  deriving (Eq, Show)
 
 -- | Snmp header without version tag
 data Header a where
@@ -262,14 +230,14 @@ data Request
     | Inform         { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
     | V2Trap         { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
     | Report         { rid :: {-# UNPACK #-} !RequestId, es :: {-# UNPACK #-} !ErrorStatus, ei :: {-# UNPACK #-} !ErrorIndex }
-  deriving (Show, Ord, Eq, Generic)
+  deriving (Show, Eq)
 
 -- | Coupla oid -> value
-data Coupla = Coupla { oid :: !Value, value :: !Value }
-  deriving (Eq, Ord, Show, Generic)
+data Coupla = Coupla { oid :: !Oid, value :: !Value }
+  deriving (Eq, Ord, Show)
 
 -- | Variable bindings
-newtype Suite = Suite [Coupla] deriving (Monoid, Show)
+newtype Suite = Suite [Coupla] deriving (Show, Monoid)
 
 instance Eq Suite where
     (==) (Suite a) (Suite b) = sort a == sort b
@@ -278,7 +246,7 @@ instance Eq Suite where
 
 -- | (snmp2 only) Community for 2(1) version
 newtype Community = Community ByteString
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq)
 
 -- | (snmp3 only) Message Identifier (like RequestId in PDU)
 newtype ID = ID Int32
@@ -297,7 +265,7 @@ type Reportable = Bool
 
 -- | (snmp3 only) rfc3412, message flag
 data Flag = Flag !Reportable !PrivAuth
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq)
 
 -- | (snmp3 only) rfc3412, security model
 data SecurityModel = UserBasedSecurityModel
@@ -312,14 +280,34 @@ data SecurityParameter = SecurityParameter
     , authenticationParameters :: !ByteString
     , privacyParameters        :: !ByteString
     }
-  deriving (Eq, Ord, Show, Generic)
+  deriving (Eq, Show)
 
 -- | (snmp3 only) rfc3412, types for ScopedPDU
 newtype ContextEngineID = ContextEngineID ByteString
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq)
 
 newtype ContextName = ContextName ByteString
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq)
+----------------------------------------------------------------------------------------------------
+
+newtype Tag = Tag Word8
+  deriving (Eq, Ord, Show)
+
+class Tagged a where
+    tag :: a -> Tag
+
+instance Tagged Request where
+    tag GetRequest{} = Tag 0xa0
+    tag GetNextRequest{} = Tag 0xa1
+    tag GetResponse{} = Tag 0xa2
+    tag SetRequest{} = Tag 0xa3
+    tag GetBulk{} = Tag 0xa5
+    tag Inform{} = Tag 0xa6
+    tag V2Trap{} = Tag 0xa7
+    tag Report{} = Tag 0xa8
+    {-# INLINE tag #-}
+
+----------------------------------------------------------------------------------------------------
 
 -- | some exception
 newtype SnmpException = SnmpException ErrorStatus
@@ -351,18 +339,12 @@ instance Show SnmpException where
     show (SnmpException (ErrorStatus x)) = "Exception " ++ show x
     {-# INLINE show #-}
 
--- | some universal getters, setters
-class HasItem a where
-    getHeader :: Packet -> Header a
-    setHeader :: Header a -> Packet -> Packet
-    getPDU :: Packet -> PDU a
-    setPDU :: PDU a -> Packet -> Packet
+----------------------------------------------------------------------------------------
 
 -- | initial new object, like mempty for monoid
 class Construct a where
     initial :: a
 
-----------------------------------------------------------------------------------------
 instance Construct (Version -> Packet) where
     initial Version3 = V3Packet Version3 initial initial
     initial Version2 = V2Packet Version2 initial initial
@@ -398,6 +380,13 @@ instance Construct Request where
     {-# INLINE initial #-}
 
 ----------------------------------------------------------------------------------------
+-- | some universal getters, setters
+class HasItem a where
+    getHeader :: Packet -> Header a
+    setHeader :: Header a -> Packet -> Packet
+    getPDU :: Packet -> PDU a
+    setPDU :: PDU a -> Packet -> Packet
+
 instance HasItem V2 where
     getHeader (V2Packet _ x _) = x
     getHeader _ = undefined
@@ -431,6 +420,8 @@ instance HasItem V3 where
     setPDU p (V3Packet v h _) = V3Packet v h p
     setPDU _ _ = undefined
     {-# INLINE setPDU #-}
+
+----------------------------------------------------------------------------------------------------
 
 getCommunity :: Header V2 -> Community
 getCommunity (V2Header c) = c
@@ -665,159 +656,56 @@ setRequest :: Request -> Packet -> Packet
 setRequest req (V2Packet v h (PDU _ s)) = V2Packet v h (PDU req s)
 setRequest req (V3Packet v h (ScopedPDU a b (PDU _ s))) = V3Packet v h (ScopedPDU a b (PDU req s))
 setRequest _ _ = undefined
-----------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
 
-newtype Size = Size Int deriving (Eq, Show, Ord)
+newtype Size = Size Int deriving (Eq, Show)
+type ErrorCode = Int
 
-instance Serialize Size where
-    put (Size i)
-        | i >= 0 && i <= 0x7f         = putWord8 (fromIntegral i)
-        | i < 0     = fail "8"
-        | otherwise = mapM_ putWord8 (lenbytes : lw)
-      where
-        lw       = bytesOfUInt (fromIntegral i)
-        lenbytes = fromIntegral (length lw .|. 0x80)
-    {-# INLINE put #-}
-
-    get = do
-        l1 <- fromIntegral <$> getWord8
-        if testBit l1 7
-            then case clearBit l1 7 of
-                     0   -> return (Size 0)
-                     len -> Size . uintbs <$> getBytes len
-            else return (Size l1)
-      where
-        {- uintbs return the unsigned int represented by the bytes -}
-        uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
-    {-# INLINE get #-}
-
-putLength :: Putter Int
-putLength = put . Size
+putLength :: Int -> Put
+putLength = putSize . Size
 
 getLength :: Get Int
 getLength = do
-    Size i <- get
+    Size i <- getSize
     return i
 
-putTag :: Tags a => a -> Put
-putTag = putWord8 . tag
+putTag :: Tag -> Put
+putTag (Tag t) = putWord8 t
+{-# INLINE putTag #-}
 
-type ErrorCode = Int
-
-getTag :: Tag -> ErrorCode -> Get ()
-getTag x e = do
-    t <- getWord8
+dropTag :: Tag -> ErrorCode -> Get ()
+dropTag x e = do
+    t <- getTag
     when (t /= x) $ fail (show e)
+-- {-# INLINE dropTag #-}
 
-putIntegral :: (Tags b, Integral a) => b -> a -> Put
-putIntegral v = putBytes v . bytesOfInt . fromIntegral
+getTag :: Get Tag
+getTag = Tag <$> getWord8
+{-# INLINE getTag #-}
 
-putIntegralU :: (Tags b, Integral a) => b -> a -> Put
-putIntegralU v = putBytes v . bytesOfUInt . fromIntegral
+putIntegral :: Integral a => a -> Put
+putIntegral = putOctets . bytesOfInt . fromIntegral
 
-putBS :: Value -> ByteString -> Put
-putBS v bs = do
-    putTag v
+putIntegralU :: Integral a => a -> Put
+putIntegralU = putOctets . bytesOfUInt . fromIntegral
+
+putBS :: ByteString -> Put
+putBS bs = do
     putLength (B.length bs)
     putByteString bs
 
-putZero :: Tags v => v -> Put
-putZero v = putTag v >> putWord8 0
+getBS :: Get ByteString
+getBS = getLength >>= getByteString
 
-putBytes :: (Tags v, Foldable l) => v -> l Word8 -> Put
-putBytes v bytes = do
-    putTag v
+putOctets :: [Word8] -> Put
+putOctets bytes = do
     putLength (length bytes)
     mapM_ putWord8 bytes
 
-instance Serialize Value where
-    put v@(Integer i) = putIntegral v i
-    put v@(BitString bs) = putBS v bs
-    put v@(OctetString bs) = putBS v bs
-    put Null = putZero Null
-    put v@(OI oids) =
-        case oids of
-            (oid1:oid2:suboids) -> do
-                let eoidclass = fromIntegral (oid1 * 40 + oid2)
-                    bs = (B.cons eoidclass . B.concat . map encode') suboids
-                putBS v bs
-            _ -> fail "put oi"
-      where
-        encode' 0 = B.singleton 0
-        encode' x = putVarEncodingIntegral x
-    put v@(IpAddress a b c d) = putBytes v [a, b, c, d]
-    put v@(Counter32 i) = putIntegralU v i
-    put v@(Gauge32 i) = putIntegralU v i
-    put v@(TimeTicks i) = putIntegralU v i
-    put v@(Opaque bs) = putBS v bs
-    put v@(NsapAddress bs) = putBS v bs
-    put v@(Counter64 i) = putIntegral v i
-    put v@(Uinteger32 i) = putIntegralU v i
-    put v@NoSuchObject = putZero v
-    put v@NoSuchInstance = putZero v
-    put v@EndOfMibView = putZero v
-    -- {-# INLINE put #-}
+getOctets :: Get ByteString
+getOctets = getLength >>= getBytes
 
-    get = do
-        t <- getWord8
-        case t of
-            0x02 -> do
-                Size l <- get
-                Integer . fromIntegral . snd . intOfBytes <$> getBytes l
-            0x03 -> do
-                Size l <- get
-                BitString <$> getByteString l
-            0x04 -> do
-                Size l <- get
-                OctetString <$> getByteString l
-            0x05 -> do
-                0 <- getWord8
-                return Null
-            0x06 -> do
-                Size l <- get
-                bs <- getByteString l
-                let (x:xs) = B.unpack bs
-                    firstOI = fromIntegral (x `div` 40)
-                    secondOI = fromIntegral (x `mod` 40)
-                    groupOID :: [Word8] -> [Word16]
-                    groupOID = map (foldl (\acc n -> (acc `shiftL` 7) + fromIntegral n) 0) . groupSubOID
-                    groupSubOIDHelper [] = Nothing
-                    groupSubOIDHelper s = Just $ spanSubOIDbound s
-                    groupSubOID :: [Word8] -> [[Word8]]
-                    groupSubOID = unfoldr groupSubOIDHelper
-                    spanSubOIDbound [] = ([], [])
-                    spanSubOIDbound (a:as) = if testBit a 7 then (clearBit a 7 : ys, zs) else ([a], as)
-                      where (ys, zs) = spanSubOIDbound as
-                return $ OI (firstOI : secondOI : groupOID xs)
-            0x40 -> do
-                Size _ <- get
-                IpAddress <$> getWord8 <*> getWord8 <*> getWord8 <*> getWord8
-            0x41 -> do
-                Size l <- get
-                Counter32 . fromIntegral . snd . uintOfBytes <$> getBytes l
-            0x42 -> do
-                Size l <- get
-                Gauge32 . fromIntegral . snd . uintOfBytes <$> getBytes l
-            0x43 -> do
-                Size l <- get
-                TimeTicks . fromIntegral . snd . uintOfBytes <$> getBytes l
-            0x44 -> do
-                Size l <- get
-                Opaque <$> getByteString l
-            0x45 -> do
-                Size l <- get
-                NsapAddress <$> getByteString l
-            0x46 -> do
-                Size l <- get
-                Counter64 . fromIntegral . snd . uintOfBytes <$> getBytes l
-            0x47 -> do
-                Size l <- get
-                Uinteger32 . fromIntegral . snd . uintOfBytes <$> getBytes l
-            0x80 -> void getWord8 *> return NoSuchObject
-            0x81 -> void getWord8 *> return NoSuchInstance
-            0x82 -> void getWord8 *> return EndOfMibView
-            _ -> fail "9"
-    -- {-# INLINE get #-}
+----------------------------------------------------------------------------------------------------
 
 {- | uintOfBytes returns the number of bytes and the unsigned integer represented by the bytes -}
 uintOfBytes :: ByteString -> (Int, Int)
@@ -863,22 +751,139 @@ putVarEncodingIntegral i = B.reverse $ B.unfoldr genOctets (i,True)
              in Just (out, (shiftR x 7, False))
         | otherwise = Nothing
 
-------
+----------------------------------------------------------------------------------------------------
+
+getSize :: Get Size
+getSize = do
+    l1 <- fromIntegral <$> getWord8
+    if testBit l1 7
+        then case clearBit l1 7 of
+                 0   -> return (Size 0)
+                 len -> Size . uintbs <$> getBytes len
+        else return (Size l1)
+  where
+    {- uintbs return the unsigned int represented by the bytes -}
+    uintbs = B.foldl (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
+
+putSize :: Size -> Put
+putSize (Size i)
+    | i >= 0 && i <= 0x7f = putWord8 (fromIntegral i)
+    | i < 0     = fail "8"
+    | otherwise = mapM_ putWord8 (lenbytes : lw)
+  where
+    lw       = bytesOfUInt (fromIntegral i)
+    lenbytes = fromIntegral (length lw .|. 0x80)
+
+putOid :: Oid -> Put
+putOid (Oid oid) =
+    case oid of
+        (id1:id2:subIds) ->
+            let eoidclass = fromIntegral (id1 * 40 + id2)
+                bs = (B.cons eoidclass . B.concat . map encode') subIds
+             in putBS bs
+        _ -> fail "put oi"  -- TODO: Set error code
+  where
+    encode' 0 = B.singleton 0
+    encode' x = putVarEncodingIntegral x
+
+getOid :: Get Oid
+getOid = do
+    bs <- getBS
+    let (x:xs) = B.unpack bs
+        firstOI = fromIntegral (x `div` 40)
+        secondOI = fromIntegral (x `mod` 40)
+        groupOID :: [Word8] -> [Word16]
+        groupOID = map (foldl (\acc n -> (acc `shiftL` 7) + fromIntegral n) 0) . groupSubOID
+        groupSubOIDHelper [] = Nothing
+        groupSubOIDHelper s = Just $ spanSubOIDbound s
+        groupSubOID :: [Word8] -> [[Word8]]
+        groupSubOID = unfoldr groupSubOIDHelper
+        spanSubOIDbound [] = ([], [])
+        spanSubOIDbound (a:as) = if testBit a 7 then (clearBit a 7 : ys, zs) else ([a], as)
+          where (ys, zs) = spanSubOIDbound as
+    return $ Oid (firstOI : secondOI : groupOID xs)
+
+putValue :: Value -> Put
+putValue (Integer i)         = putTag (Tag 0x02) >> putIntegral i
+putValue (BitString bs)      = putTag (Tag 0x03) >> putBS bs
+putValue (OctetString bs)    = putTag (Tag 0x04) >> putBS bs
+putValue Null              = putTag (Tag 0x05) >> putWord8 0
+putValue (OI oid)            = putTag (Tag 0x06) >> putOid oid
+putValue (IpAddress a b c d) = putTag (Tag 0x40) >> putOctets [a, b, c, d]
+putValue (Counter32 i)       = putTag (Tag 0x41) >> putIntegralU i
+putValue (Gauge32 i)         = putTag (Tag 0x42) >> putIntegralU i
+putValue (TimeTicks i)       = putTag (Tag 0x43) >> putIntegralU i
+putValue (Opaque bs)         = putTag (Tag 0x44) >> putBS bs
+putValue (NsapAddress bs)    = putTag (Tag 0x45) >> putBS bs
+putValue (Counter64 i)       = putTag (Tag 0x46) >> putIntegral i
+putValue (UInteger32 i)      = putTag (Tag 0x47) >> putIntegralU i
+putValue NoSuchObject      = putTag (Tag 0x80) >> putWord8 0
+putValue NoSuchInstance    = putTag (Tag 0x81) >> putWord8 0
+putValue EndOfMibView      = putTag (Tag 0x82) >> putWord8 0
+
+getValue :: Get Value
+getValue = do
+    Tag t <- getTag
+    case t of
+        0x02 -> Integer . fromIntegral . snd . intOfBytes <$> getOctets
+        0x03 -> BitString <$> getBS
+        0x04 -> OctetString <$> getBS
+        0x05 -> Null <$ getWord8
+        0x06 -> OI <$> getOid
+        0x40 -> do
+            _ <- getSize
+            IpAddress <$> getWord8 <*> getWord8 <*> getWord8 <*> getWord8
+        0x41 -> Counter32 . fromIntegral . snd . uintOfBytes <$> getOctets
+        0x42 -> Gauge32 . fromIntegral . snd . uintOfBytes <$> getOctets
+        0x43 -> TimeTicks . fromIntegral . snd . uintOfBytes <$> getOctets
+        0x44 -> Opaque <$> getBS
+        0x45 -> NsapAddress <$> getBS
+        0x46 -> Counter64 . fromIntegral . snd . uintOfBytes <$> getOctets
+        0x47 -> UInteger32 . fromIntegral . snd . uintOfBytes <$> getOctets
+        0x80 -> NoSuchObject <$ getWord8
+        0x81 -> NoSuchInstance <$ getWord8
+        0x82 -> EndOfMibView <$ getWord8
+        _ -> fail "9"
+
+instance Serialize Size where
+    put = putSize
+    {-# INLINE put #-}
+
+    get = getSize
+    {-# INLINE get #-}
+
+instance Serialize Value where
+    put = putValue
+    {-# INLINE put #-}
+
+    get = getValue
+    {-# INLINE get #-}
+
+----------------------------------------------------------------------------------------------------
+
 getInteger :: Get Int32
-getInteger = get >>= \case
+getInteger = getValue >>= \case
     (Integer i) -> return i
     _ -> fail "7"
 
 getOctetString :: Get ByteString
-getOctetString = get >>= \case
+getOctetString = getValue >>= \case
     (OctetString os) -> return os
     _ -> fail "7"
-------
+
+getOI :: Get Oid
+getOI = getValue >>= \case
+    (OI oid) -> return oid
+    _ -> fail "7"
+
+----------------------------------------------------------------------------------------------------
 
 instance Serialize Version where
-    put Version1 = put (Integer 0)
-    put Version2 = put (Integer 1)
-    put Version3 = put (Integer 3)
+    put = putValue . Integer . mpModel
+      where
+        mpModel Version1 = 0
+        mpModel Version2 = 1
+        mpModel Version3 = 3
     {-# INLINE put #-}
 
     get = getInteger >>= toVersion
@@ -890,7 +895,7 @@ instance Serialize Version where
     {-# INLINE get #-}
 
 instance Serialize Community where
-    put (Community bs) = put (OctetString bs)
+    put (Community bs) = putValue (OctetString bs)
     {-# INLINE put #-}
 
     get = Community <$> getOctetString
@@ -904,14 +909,14 @@ instance Serialize (Header V2) where
     {-# INLINE get #-}
 
 instance Serialize ID where
-    put (ID x) = put (Integer x)
+    put (ID x) = putValue (Integer x)
     {-# INLINE put #-}
 
     get = ID <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize MaxSize where
-    put (MaxSize x) = put (Integer $ fromIntegral x)
+    put (MaxSize x) = putValue (Integer $ fromIntegral x)
     {-# INLINE put #-}
 
     get = MaxSize . fromIntegral <$> getInteger
@@ -927,7 +932,7 @@ instance Serialize Flag where
                            AuthNoPriv -> setBit zero 2
                            AuthPriv -> setBit zero 1 .|. setBit zero 2
             flag = reportable .|. privauth
-         in put $ OctetString (B.pack [flag])
+         in putValue $ OctetString (B.pack [flag])
     {-# INLINE put #-}
 
     get = getOctetString >>= toFlag
@@ -946,7 +951,7 @@ instance Serialize Flag where
     {-# INLINE get #-}
 
 instance Serialize SecurityModel where
-    put UserBasedSecurityModel = put (Integer 3)
+    put UserBasedSecurityModel = putValue (Integer 3)
     {-# INLINE put #-}
 
     get = getInteger >>= toSecurityModel
@@ -957,21 +962,25 @@ instance Serialize SecurityModel where
 
 instance Serialize SecurityParameter where
     put SecurityParameter{..} = do
-        putTag (OctetString "")
-        putNested putLength (putWord8 0x30 >> putNested putLength putSecurityParameter)
+        putTag (Tag 0x04)
+        putNested putLength $ do
+            putTag (Tag 0x30)
+            putNested putLength putSecurityParameter
       where
         putSecurityParameter = do
-            put (OctetString authoritiveEngineId)
-            put (Integer $ fromIntegral authoritiveEngineBoots)
-            put (Integer $ fromIntegral authoritiveEngineTime)
-            put (OctetString userName)
-            put (OctetString authenticationParameters)
-            put (OctetString privacyParameters)
+            putValue (OctetString authoritiveEngineId)
+            putValue (Integer $ fromIntegral authoritiveEngineBoots)
+            putValue (Integer $ fromIntegral authoritiveEngineTime)
+            putValue (OctetString userName)
+            putValue (OctetString authenticationParameters)
+            putValue (OctetString privacyParameters)
     {-# INLINE put #-}
 
     get = do
-        getTag (tag (OctetString "")) 9
-        getNested getLength (getTag 0x30 9 >> getNested getLength getSecurityParameter')
+        dropTag (Tag 0x04) 9
+        getNested getLength $ do
+            dropTag (Tag 0x30) 9
+            getNested getLength getSecurityParameter'
       where
         getSecurityParameter' :: Get SecurityParameter
         getSecurityParameter' = SecurityParameter
@@ -985,77 +994,81 @@ instance Serialize SecurityParameter where
 
 instance Serialize (Header V3) where
     put (V3Header iD maxSize flag securityModel securityParameter) = do
-        putWord8 0x30
-        putNested putLength putHeader
-        put securityParameter
-      where
-        putHeader = do
+        putTag (Tag 0x30)
+        putNested putLength $ do
             put iD
             put maxSize
             put flag
             put securityModel
+        put securityParameter
     {-# INLINE put #-}
 
     get = do
-        getTag 0x30 9
+        dropTag (Tag 0x30) 9
         getNested getLength (V3Header <$> get <*> get <*> get <*> get) <*> get
     {-# INLINE get #-}
 
 instance Serialize RequestId where
-    put (RequestId rid) = put (Integer $ fromIntegral rid)
+    put (RequestId rid) = putValue (Integer $ fromIntegral rid)
     {-# INLINE put #-}
 
     get = RequestId <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize ErrorStatus where
-    put (ErrorStatus es) = put (Integer $ fromIntegral es)
+    put (ErrorStatus es) = putValue (Integer $ fromIntegral es)
     {-# INLINE put #-}
 
     get = ErrorStatus <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize ErrorIndex where
-    put (ErrorIndex ei) = put (Integer $ fromIntegral ei)
+    put (ErrorIndex ei) = putValue (Integer $ fromIntegral ei)
     {-# INLINE put #-}
 
     get = ErrorIndex <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize Suite where
-    put (Suite bs) = putWord8 0x30 >> putNested putLength (mapM_ put bs)
+    put (Suite vbs) = putTag (Tag 0x30) >> putNested putLength (mapM_ put vbs)
     {-# INLINE put #-}
 
     get = do
-        getTag 0x30 9
+        dropTag (Tag 0x30) 9
         Suite <$> getNested getLength (getSuite' [])
       where
         getSuite' xs = do
             check <- isEmpty
             if check
-                then return xs
+                then return $ reverse xs
                 else do
                     coupla <- get
                     getSuite' (coupla : xs)
     {-# INLINE get #-}
 
 instance Serialize Coupla where
-    put Coupla{..} = putWord8 0x30 >> putNested putLength (put oid >> put value)
+    put (Coupla oid val) = do
+        putTag (Tag 0x30)
+        putNested putLength (putValue (OI oid) >> putValue val)
     {-# INLINE put #-}
 
     get = do
-        getTag 0x30 9
-        getNested getLength (Coupla <$> get <*> get)
+        dropTag (Tag 0x30) 9
+        getNested getLength (Coupla <$> getOI <*> getValue)
     {-# INLINE get #-}
 
 instance Serialize (PDU V2) where
     put (PDU request suite) = do
-        putWord8 (tag request)
-        putNested putLength (put (rid request) >> put (es request) >> put (ei request) >> put suite)
+        putTag (tag request)
+        putNested putLength $ do
+            put (rid request)
+            put (es request)
+            put (ei request)
+            put suite
     {-# INLINE put #-}
 
     get = do
-        t <- getWord8
+        Tag t <- getTag
         let request = case t of
                 0xa0 -> GetRequest
                 0xa1 -> GetNextRequest
@@ -1070,40 +1083,46 @@ instance Serialize (PDU V2) where
     {-# INLINE get #-}
 
 instance Serialize ContextEngineID where
-    put (ContextEngineID bs) = put (OctetString bs)
+    put (ContextEngineID bs) = putValue (OctetString bs)
     {-# INLINE put #-}
 
     get = ContextEngineID <$> getOctetString
     {-# INLINE get #-}
 
 instance Serialize ContextName where
-    put (ContextName bs) = put (OctetString bs)
+    put (ContextName bs) = putValue (OctetString bs)
     {-# INLINE put #-}
 
     get = ContextName <$> getOctetString
     {-# INLINE get #-}
 
 instance Serialize (PDU V3) where
-    put (ScopedPDU contextEngine contextName pduv2) = putWord8 0x30 >> putNested putLength (put contextEngine >> put contextName >> put pduv2)
-    put (CryptedPDU bs) = put (OctetString bs)
+    put (ScopedPDU contextEngine contextName pdu) = do
+        putTag (Tag 0x30)
+        putNested putLength (put contextEngine >> put contextName >> put pdu)
+    put (CryptedPDU bs) = putValue (OctetString bs)
     {-# INLINE put #-}
 
     get = do
-        t <- getWord8
+        Tag t <- getTag
         case t of
             0x30 -> getNested getLength (ScopedPDU <$> get <*> get <*> get)
-            0x04 -> do
-                l <- getLength
-                CryptedPDU <$> getByteString l
+            0x04 -> CryptedPDU <$> getBS
             _ -> fail "9"
     {-# INLINE get #-}
 
 instance Serialize Packet where
-    put (V2Packet version header body) = putWord8 0x30 >> putNested putLength (put version >> put header >> put body)
-    put (V3Packet version header body) = putWord8 0x30 >> putNested putLength (put version >> put header >> put body)
+    put (V2Packet version header body) = do
+        putTag (Tag 0x30)
+        putNested putLength (put version >> put header >> put body)
+    put (V3Packet version header body) = do
+        putTag (Tag 0x30)
+        putNested putLength (put version >> put header >> put body)
     {-# INLINE put #-}
 
-    get = getTag 0x30 9 >> getNested getLength getAll
+    get = do
+        dropTag (Tag 0x30) 9
+        getNested getLength getAll
       where
         getAll = get >>= getPacket
         getPacket Version1 = V2Packet Version1 <$> get <*> get
@@ -1112,6 +1131,7 @@ instance Serialize Packet where
     {-# INLINE get #-}
 
 -------------------------------------------------------------------------------------------------------------
+
 cleanPass :: ByteString
 cleanPass = B.pack $ replicate 12 0x00
 

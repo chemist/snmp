@@ -1,15 +1,16 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Main where
 
 import           Data.ByteString                      (ByteString, pack)
-import           Data.List                            (sort)
+-- import           Data.List                            (sort)
 import           Data.Serialize
 import           Network.Protocol.Snmp
 import           Test.Framework                       (Test, defaultMain,
                                                        testGroup)
 import           Test.Framework.Providers.QuickCheck2 (testProperty)
 import           Test.QuickCheck
-import           Test.QuickCheck.Gen                  (oneof)
+-- import           Test.QuickCheck.Gen                  (oneof)
 
 main :: IO ()
 main = defaultMain tests
@@ -33,6 +34,16 @@ tests = [ testGroup "encode decode"
 
 prop_Encode :: (Serialize a, Eq a) => a -> Bool
 prop_Encode xs = Right xs == decode (encode xs)
+
+instance Arbitrary Oid where
+    arbitrary = Oid <$> oilist
+      where
+        oilist = do
+            a <- choose (0,2)
+            b <- choose (0,39)
+            s <- choose (0,30)
+            l <- take s <$> infiniteList
+            return $ a : b : l
 
 instance Arbitrary Version where
     arbitrary = oneof [ pure Version1, pure Version2, pure Version3 ]
@@ -76,35 +87,28 @@ instance Arbitrary Value where
               , Opaque <$> arbitrary
               , NsapAddress <$> arbitrary
               , Counter64 <$> arbitrary
-              , Uinteger32 . abs <$> arbitrary
+              , UInteger32 . abs <$> arbitrary
               , pure NoSuchInstance
               , pure NoSuchObject
               , pure EndOfMibView
-              , OI <$> oilist
+              , OI <$> arbitrary
               ]
-        where
-        oilist = do
-            a <- choose (0,2)
-            b <- choose (0,39)
-            s <- choose (0,30)
-            l <- take s <$> infiniteList
-            return $ a : b : l
 
 instance Arbitrary Request where
     arbitrary =
-        oneof [ GetRequest <$> rid <*> es <*> ei
-              , GetNextRequest <$> rid <*> es <*> ei
-              , GetResponse <$> rid <*> es <*> ei
-              , SetRequest <$> rid <*> es <*> ei
-              , GetBulk <$> rid <*> es <*> ei
-              , Inform <$> rid <*> es <*> ei
-              , V2Trap <$> rid <*> es <*> ei
-              , Report <$> rid <*> es <*> ei
+        oneof [ GetRequest <$> rid' <*> es' <*> ei'
+              , GetNextRequest <$> rid' <*> es' <*> ei'
+              , GetResponse <$> rid' <*> es' <*> ei'
+              , SetRequest <$> rid' <*> es' <*> ei'
+              , GetBulk <$> rid' <*> es' <*> ei'
+              , Inform <$> rid' <*> es' <*> ei'
+              , V2Trap <$> rid' <*> es' <*> ei'
+              , Report <$> rid' <*> es' <*> ei'
               ]
-        where
-        rid = RequestId <$> arbitrary
-        es  = ErrorStatus <$> arbitrary
-        ei  = ErrorIndex <$> arbitrary
+      where
+        rid' = RequestId <$> arbitrary
+        es'  = ErrorStatus <$> arbitrary
+        ei'  = ErrorIndex <$> arbitrary
 
 instance Arbitrary ContextEngineID where
     arbitrary = ContextEngineID <$> arbitrary
@@ -116,13 +120,7 @@ instance Arbitrary Suite where
     arbitrary = Suite <$> listOfCoupla
       where
       listOfCoupla = listOf coupla
-      coupla = Coupla <$> oi <*> arbitrary
-      oi = do
-          a <- choose (0,2)
-          b <- choose (0,39)
-          s <- choose (0,30)
-          l <- take s <$> infiniteList
-          return $ OI $ a : b : l
+      coupla = Coupla <$> arbitrary <*> arbitrary
 
 instance Arbitrary (PDU V2) where
     arbitrary = PDU <$> arbitrary <*> arbitrary
@@ -137,3 +135,4 @@ instance Arbitrary Packet where
                       , V2Packet Version2 <$> arbitrary <*> arbitrary
                       , V3Packet Version3 <$> arbitrary <*> arbitrary
                       ]
+
