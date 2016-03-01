@@ -128,6 +128,9 @@ module Network.Protocol.Snmp
     , toSalt
     -- * exceptions
     , SnmpException(..)
+    -- * encoding/decoding
+    , encode
+    , decode
     -- * usage example
     -- $example
     ) where
