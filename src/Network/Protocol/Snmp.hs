@@ -156,7 +156,7 @@ import           Data.Word
 import           GHC.Int              (Int32, Int64)
 
 newtype Oid = Oid [Word16]
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Monoid, Show)
 
 data Value
     = Integer {-# UNPACK #-} !Int32
@@ -215,13 +215,13 @@ deriving instance Show (PDU a)
 deriving instance Eq (PDU a)
 
 -- | Request id
-newtype RequestId = RequestId Int32 deriving (Show, Eq, Ord)
+newtype RequestId = RequestId Int32 deriving (Show, Eq, Ord, Num, Bounded, Enum)
 
 -- | Error status
-newtype ErrorStatus = ErrorStatus Int32 deriving (Show, Eq, Ord)
+newtype ErrorStatus = ErrorStatus Int32 deriving (Show, Eq, Ord, Num)
 
 -- | Error index
-newtype ErrorIndex = ErrorIndex Int32 deriving (Show, Eq, Ord)
+newtype ErrorIndex = ErrorIndex Int32 deriving (Show, Eq, Ord, Num)
 
 -- | requests
 data Request
