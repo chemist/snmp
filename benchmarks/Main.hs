@@ -1,51 +1,26 @@
-{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Criterion.Main
-import Network.Protocol.Snmp
-import Data.Serialize 
--- import qualified "cryptohash" Crypto.Hash.MD5      as MD5
--- import qualified "cryptohash" Crypto.Hash.SHA1     as SHA1
--- import Data.ByteString (ByteString)
--- import qualified Data.ByteString.Lazy as L
+import           Criterion.Main
+import           Network.Protocol.Snmp
 
 main :: IO ()
 main = defaultMain
-  [ bgroup "new"
-    [ bench "pack unpack version 1" $ whnf packUnpack Version1
-    , bench "pack unpack version 2" $ whnf packUnpack Version2
-    , bench "pack unpack version 3" $ whnf packUnpack Version3
+  [ bgroup "packet pack/unpack"
+    [ bench "pack unpack version 1" $ whnf packUnpackPacket Version1
+    , bench "pack unpack version 2" $ whnf packUnpackPacket Version2
+    , bench "pack unpack version 3" $ whnf packUnpackPacket Version3
     ]
---  , bgroup "hash"
---    [ bench "cryptohash md5 strict" $ whnf MD5.hash str
---    , bench "cryptohash md5 lazy" $ whnf MD5.hashlazy lstr
---    , bench "cryptohash sha1 strict" $ whnf SHA1.hash str
---    , bench "cryptohash sha1 lazy" $ whnf SHA1.hashlazy lstr
---    , bench "cryptonite md5 strict" $ whnf chash str
---    , bench "cryptonite md5 lazy" $ whnf clhash lstr
---    , bench "cryptonite sha1 strict" $ whnf cshash str
---    , bench "cryptonite sha1 lazy" $ whnf cslhash lstr
---    ]
+  , bgroup "value pack/unpack"
+    [ bench "pack integer" $ whnf packUnpackValue (Integer 65535)
+    , bench "pack long oid" $ whnf packUnpackValue (OI $ Oid [1..65535])
+    , bench "pack OctetString" $ whnf packUnpackValue (OctetString "some test string")
+    ]
   ]
 
-packUnpack :: Version -> Either String Packet
-packUnpack v = decode (encode (initial v :: Packet))
+packUnpackPacket :: Version -> Either String Packet
+packUnpackPacket v = decode (encode (initial v :: Packet))
 
--- chash :: ByteString -> ByteString
--- chash = hash MD5
--- 
--- cshash :: ByteString -> ByteString
--- cshash = hash SHA
--- 
--- clhash :: L.ByteString -> ByteString
--- clhash = hashlazy MD5
--- 
--- cslhash :: L.ByteString -> ByteString
--- cslhash = hashlazy SHA
--- 
--- str :: ByteString
--- str = "asdfasdfasdfasdgasdlgkjasdfoasjpojvpajsdpofijaspoifdjapsodijfpaosdijfpoasjdfpoiasdfjasoidjfpasfij"
--- 
--- lstr :: L.ByteString
--- lstr = "asdfasdfasdfasdgasdlgkjasdfoasjpojvpajsdpofijaspoifdjapsodijfpaosdijfpoasjdfpoiasdfjasoidjfpasfij"
+packUnpackValue :: Value -> Either String Value
+packUnpackValue = decode . encode
+
