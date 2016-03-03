@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE RecordWildCards   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Network.Protocol.Snmp.Serialize
@@ -22,21 +21,6 @@ import           Data.Word                   (Word8)
 
 import           Network.Protocol.Snmp.Types
 
-class Tagged a where
-    tag :: a -> Tag
-
-instance Tagged Request where
-    tag GetRequest{} = Tag 0xa0
-    tag GetNextRequest{} = Tag 0xa1
-    tag GetResponse{} = Tag 0xa2
-    tag SetRequest{} = Tag 0xa3
-    tag GetBulk{} = Tag 0xa5
-    tag Inform{} = Tag 0xa6
-    tag V2Trap{} = Tag 0xa7
-    tag Report{} = Tag 0xa8
-    {-# INLINE tag #-}
-
-----------------------------------------------------------------------------------------------------
 
 type ErrorCode = Int
 
@@ -195,7 +179,7 @@ putValue (Integer i)         = putTag (Tag 0x02) >> putIntegral i
 putValue (BitString bs)      = putTag (Tag 0x03) >> putBS bs
 putValue (OctetString bs)    = putTag (Tag 0x04) >> putBS bs
 putValue Null              = putTag (Tag 0x05) >> putWord8 0
-putValue (OI oid)            = putTag (Tag 0x06) >> putOid oid
+putValue (OI oi)            = putTag (Tag 0x06) >> putOid oi
 putValue (IpAddress a b c d) = putTag (Tag 0x40) >> putOctets [a, b, c, d]
 putValue (Counter32 i)       = putTag (Tag 0x41) >> putIntegralU i
 putValue (Gauge32 i)         = putTag (Tag 0x42) >> putIntegralU i
@@ -262,7 +246,7 @@ getOctetString = getValue >>= \case
 
 getOI :: Get Oid
 getOI = getValue >>= \case
-    (OI oid) -> return oid
+    (OI oi) -> return oi
     _ -> fail "7"
 {-# INLINE getOI #-}
 
@@ -298,11 +282,11 @@ instance Serialize (Header V2) where
     get = V2Header <$> get
     {-# INLINE get #-}
 
-instance Serialize ID where
-    put (ID x) = putValue (Integer x)
+instance Serialize MessageID where
+    put (MessageID x) = putValue (Integer x)
     {-# INLINE put #-}
 
-    get = ID <$> getInteger
+    get = MessageID <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize MaxSize where
@@ -347,55 +331,84 @@ instance Serialize SecurityModel where
         toSecurityModel _ = fail "7" -- SnmpException 7
     {-# INLINE get #-}
 
+instance Serialize EngineID where
+    put (EngineID s) = putValue (OctetString s)
+    {-# INLINE put #-}
+    get = EngineID <$> getOctetString
+    {-# INLINE get #-}
+
+instance Serialize EngineBoot where
+    put (EngineBoot x) = putValue (Integer x)
+    {-# INLINE put #-}
+    get = EngineBoot <$> getInteger
+    {-# INLINE get #-}
+
+instance Serialize EngineTime where
+    put (EngineTime x) = putValue (Integer x)
+    {-# INLINE put #-}
+    get = EngineTime <$> getInteger
+    {-# INLINE get #-}
+
+instance Serialize Login where
+    put (Login bs) = putValue (OctetString bs)
+    {-# INLINE put #-}
+    get = Login <$> getOctetString
+    {-# INLINE get #-}
+
+instance Serialize AuthenticationParameter where
+    put (AuthenticationParameter bs) = putValue (OctetString bs)
+    {-# INLINE put #-}
+    get = AuthenticationParameter <$> getOctetString
+    {-# INLINE get #-}
+
+instance Serialize PrivacyParameter where
+    put (PrivacyParameter bs) = putValue (OctetString bs)
+    {-# INLINE put #-}
+    get = PrivacyParameter <$> getOctetString
+    {-# INLINE get #-}
+
 instance Serialize SecurityParameter where
-    put SecurityParameter{..} = do
+    put (SecurityParameter eid boots time username auth priv) = do
         putTag (Tag 0x04)
         putNested putLength $ do
             putTag (Tag 0x30)
-            putNested putLength putSecurityParameter
-      where
-        putSecurityParameter = do
-            putValue (OctetString authoritiveEngineId)
-            putValue (Integer $ fromIntegral authoritiveEngineBoots)
-            putValue (Integer $ fromIntegral authoritiveEngineTime)
-            putValue (OctetString userName)
-            putValue (OctetString authenticationParameters)
-            putValue (OctetString privacyParameters)
+            putNested putLength $ do
+                put eid
+                put boots
+                put time
+                put username
+                put auth
+                put priv
+    {-# INLINE put #-}
 
     get = do
         dropTag (Tag 0x04) 9
         getNested getLength $ do
             dropTag (Tag 0x30) 9
-            getNested getLength getSecurityParameter'
-      where
-        getSecurityParameter' :: Get SecurityParameter
-        getSecurityParameter' = SecurityParameter
-                              <$> getOctetString
-                              <*> (fromIntegral <$> getInteger)
-                              <*> (fromIntegral <$> getInteger)
-                              <*> getOctetString
-                              <*> getOctetString
-                              <*> getOctetString
+            getNested getLength (SecurityParameter <$> get <*> get <*> get <*> get <*> get <*> get)
+    {-# INLINE get #-}
 
 instance Serialize (Header V3) where
-    put (V3Header iD maxSize flag securityModel securityParameter) = do
+    put (V3Header msgid maxSize flag securityModel securityParameter) = do
         putTag (Tag 0x30)
         putNested putLength $ do
-            put iD
+            put msgid
             put maxSize
             put flag
             put securityModel
         put securityParameter
+    {-# INLINE put #-}
 
     get = do
         dropTag (Tag 0x30) 9
         getNested getLength (V3Header <$> get <*> get <*> get <*> get) <*> get
+    {-# INLINE get #-}
 
-instance Serialize RequestId where
-    put (RequestId rid) = putValue (Integer $ fromIntegral rid)
+instance Serialize RequestID where
+    put (RequestID rid) = putValue (Integer $ fromIntegral rid)
     {-# INLINE put #-}
 
-    get = RequestId <$> getInteger
+    get = RequestID <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize ErrorStatus where
@@ -414,23 +427,22 @@ instance Serialize ErrorIndex where
 
 instance Serialize Suite where
     put (Suite vbs) = putTag (Tag 0x30) >> putNested putLength (mapM_ put vbs)
+    {-# INLINE put #-}
 
     get = do
         dropTag (Tag 0x30) 9
-        Suite <$> getNested getLength (getSuite' [])
+        Suite <$> getNested getLength (isEmpty >>= getSuite [])
       where
-        getSuite' xs = do
-            check <- isEmpty
-            if check
-                then return $ reverse xs
-                else do
-                    coupla <- get
-                    getSuite' (coupla : xs)
+        getSuite xs True = return $ reverse xs
+        getSuite xs False = do
+            coupla <- get
+            isEmpty >>= getSuite (coupla:xs)
+    {-# INLINE get #-}
 
 instance Serialize Coupla where
-    put (Coupla oid val) = do
+    put (Coupla oi val) = do
         putTag (Tag 0x30)
-        putNested putLength (putValue (OI oid) >> putValue val)
+        putNested putLength (putValue (OI oi) >> putValue val)
     {-# INLINE put #-}
 
     get = do
@@ -439,28 +451,37 @@ instance Serialize Coupla where
     {-# INLINE get #-}
 
 instance Serialize (PDU V2) where
-    put (PDU request suite) = do
-        putTag (tag request)
+    put (PDU (Request rt rid es ei) suite) = do
+        putTag $ toTag rt
         putNested putLength $ do
-            put (rid request)
-            put (es request)
-            put (ei request)
+            put rid
+            put es
+            put ei
             put suite
+      where
+        toTag GetRequest = Tag 0xa0
+        toTag GetNextRequest = Tag 0xa1
+        toTag GetResponse = Tag 0xa2
+        toTag SetRequest = Tag 0xa3
+        toTag GetBulkRequest = Tag 0xa5
+        toTag Inform = Tag 0xa6
+        toTag V2Trap = Tag 0xa7
+        toTag Report = Tag 0xa8
     {-# INLINE put #-}
 
     get = do
-        Tag t <- getTag
-        let request = case t of
-                0xa0 -> GetRequest
-                0xa1 -> GetNextRequest
-                0xa2 -> GetResponse
-                0xa3 -> SetRequest
-                0xa5 -> GetBulk
-                0xa6 -> Inform
-                0xa7 -> V2Trap
-                0xa8 -> Report
-                _ -> fail "9"
-        getNested getLength (PDU <$> (request <$> get <*> get <*> get) <*> get)
+        rt <- fromTag =<< getTag
+        getNested getLength (PDU <$> (Request rt <$> get <*> get <*> get) <*> get)
+      where
+        fromTag (Tag 0xa0) = return GetRequest
+        fromTag (Tag 0xa1) = return GetNextRequest
+        fromTag (Tag 0xa2) = return GetResponse
+        fromTag (Tag 0xa3) = return SetRequest
+        fromTag (Tag 0xa5) = return GetBulkRequest
+        fromTag (Tag 0xa6) = return Inform
+        fromTag (Tag 0xa7) = return V2Trap
+        fromTag (Tag 0xa8) = return Report
+        fromTag _ = fail "9"
     {-# INLINE get #-}
 
 instance Serialize ContextEngineID where

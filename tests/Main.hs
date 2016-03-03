@@ -20,7 +20,7 @@ tests = [ testGroup "encode decode"
           [ testProperty "value" (prop_Encode :: Value -> Bool)
           , testProperty "version" (prop_Encode :: Version -> Bool)
           , testProperty "header v2" (prop_Encode :: Header V2 -> Bool)
-          , testProperty "ID" (prop_Encode :: ID -> Bool)
+          , testProperty "ID" (prop_Encode :: MessageID -> Bool)
           , testProperty "MaxSize" (prop_Encode :: MaxSize -> Bool)
           , testProperty "Flag" (prop_Encode :: Flag -> Bool)
           , testProperty "SecurityParameter" (prop_Encode :: SecurityParameter -> Bool)
@@ -51,8 +51,8 @@ instance Arbitrary Version where
 instance Arbitrary (Header V2) where
     arbitrary = V2Header . Community <$> arbitrary
 
-instance Arbitrary ID where
-    arbitrary = ID <$> arbitrary
+instance Arbitrary MessageID where
+    arbitrary = MessageID <$> arbitrary
 
 instance Arbitrary MaxSize where
     arbitrary = MaxSize <$> arbitrary
@@ -65,6 +65,24 @@ instance Arbitrary (Header V3) where
                          <*> arbitrary
 instance Arbitrary Flag where
     arbitrary = Flag <$> arbitrary <*> oneof [ pure NoAuthNoPriv, pure AuthNoPriv, pure AuthPriv ]
+
+instance Arbitrary EngineID where
+    arbitrary = EngineID <$> arbitrary
+
+instance Arbitrary EngineTime where
+    arbitrary = EngineTime <$> arbitrary
+
+instance Arbitrary EngineBoot where
+    arbitrary = EngineBoot <$> arbitrary
+
+instance Arbitrary AuthenticationParameter where
+    arbitrary = AuthenticationParameter <$> arbitrary
+
+instance Arbitrary PrivacyParameter where
+    arbitrary = PrivacyParameter <$> arbitrary
+
+instance Arbitrary Login where
+    arbitrary = Login <$> arbitrary
 
 instance Arbitrary SecurityParameter where
     arbitrary = SecurityParameter <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
@@ -94,19 +112,22 @@ instance Arbitrary Value where
               , OI <$> arbitrary
               ]
 
+instance Arbitrary RequestType where
+    arbitrary = oneof
+        [ pure GetRequest
+        , pure GetNextRequest
+        , pure GetResponse
+        , pure SetRequest
+        , pure GetBulkRequest
+        , pure Inform
+        , pure V2Trap
+        , pure Report
+        ]
+
 instance Arbitrary Request where
-    arbitrary =
-        oneof [ GetRequest <$> rid' <*> es' <*> ei'
-              , GetNextRequest <$> rid' <*> es' <*> ei'
-              , GetResponse <$> rid' <*> es' <*> ei'
-              , SetRequest <$> rid' <*> es' <*> ei'
-              , GetBulk <$> rid' <*> es' <*> ei'
-              , Inform <$> rid' <*> es' <*> ei'
-              , V2Trap <$> rid' <*> es' <*> ei'
-              , Report <$> rid' <*> es' <*> ei'
-              ]
+    arbitrary = Request <$> arbitrary <*> rid' <*> es' <*> ei'
       where
-        rid' = RequestId <$> arbitrary
+        rid' = RequestID <$> arbitrary
         es'  = ErrorStatus <$> arbitrary
         ei'  = ErrorIndex <$> arbitrary
 

@@ -16,9 +16,9 @@ module Network.Protocol.Snmp.Construct
     , getFlag
     , getSecurityModel
     , getSecurityParameter
-    , getAuthoritiveEngineId
-    , getAuthoritiveEngineBoots
-    , getAuthoritiveEngineTime
+    , getAuthoritativeEngineID
+    , getAuthoritativeEngineBoots
+    , getAuthoritativeEngineTime
     , getUserName
     , getAuthenticationParameters
     , getPrivacyParameters
@@ -29,9 +29,9 @@ module Network.Protocol.Snmp.Construct
     , setFlag
     , setSecurityModel
     , setSecurityParameter
-    , setAuthoritiveEngineId
-    , setAuthoritiveEngineBoots
-    , setAuthoritiveEngineTime
+    , setAuthoritativeEngineID
+    , setAuthoritativeEngineBoots
+    , setAuthoritativeEngineTime
     , setUserName
     , setAuthenticationParameters
     , setPrivacyParameters
@@ -41,15 +41,15 @@ module Network.Protocol.Snmp.Construct
     , Construct(..)
     -- ** helpers for work with Packet
     -- *** universal
-    , getVersion
-    , getRequest
-    , setRequest
-    , getRid
-    , setRid
-    , getSuite
-    , setSuite
-    , getErrorStatus
-    , setErrorStatus
+    , getVersionP
+    , getRequestP
+    , setRequestP
+    , getRidP
+    , setRidP
+    , getSuiteP
+    , setSuiteP
+    , getErrorStatusP
+    , setErrorStatusP
     -- *** v2 only
     , setCommunityP
     -- *** v3 only
@@ -60,8 +60,8 @@ module Network.Protocol.Snmp.Construct
     , setAuthenticationParametersP
     , setReportableP
     , setPrivAuthP
-    , getEngineIdP
-    , setEngineIdP
+    , getEngineIDP
+    , setEngineIDP
     , getEngineBootsP
     , setEngineBootsP
     , getEngineTimeP
@@ -69,9 +69,6 @@ module Network.Protocol.Snmp.Construct
     , getPrivParametersP
     , setPrivParametersP
     ) where
-
-import           Data.ByteString             (ByteString)
-import           Data.Int                    (Int32)
 
 import           Network.Protocol.Snmp.Types
 
@@ -86,7 +83,7 @@ instance Construct (Version -> Packet) where
     {-# INLINE initial #-}
 
 instance Construct (Header V3) where
-    initial = V3Header (ID 0) (MaxSize 65007) (Flag False NoAuthNoPriv) UserBasedSecurityModel initial
+    initial = V3Header (MessageID 0) (MaxSize 65007) (Flag False NoAuthNoPriv) UserBasedSecurityModel initial
     {-# INLINE initial #-}
 
 instance Construct (Header V2) where
@@ -102,7 +99,7 @@ instance Construct (PDU V2) where
     {-# INLINE initial #-}
 
 instance Construct SecurityParameter where
-    initial = SecurityParameter "" 0 0 "" "" ""
+    initial = SecurityParameter (EngineID "") 0 0 (Login "") (AuthenticationParameter "") (PrivacyParameter "")
     {-# INLINE initial #-}
 
 instance Construct Suite where
@@ -110,7 +107,7 @@ instance Construct Suite where
     {-# INLINE initial #-}
 
 instance Construct Request where
-    initial = GetRequest (RequestId 0) (ErrorStatus 0) (ErrorIndex 0)
+    initial = Request GetRequest (RequestID 0) (ErrorStatus 0) (ErrorIndex 0)
     {-# INLINE initial #-}
 
 ----------------------------------------------------------------------------------------
@@ -163,7 +160,7 @@ getCommunity (V2Header c) = c
 setCommunity :: Community -> Header V2 -> Header V2
 setCommunity c (V2Header _) = V2Header c
 
-getID :: Header V3 -> ID
+getID :: Header V3 -> MessageID
 getID (V3Header i _ _ _ _) = i
 
 getMaxSize :: Header V3 -> MaxSize
@@ -178,23 +175,43 @@ getSecurityModel (V3Header _ _ _ i _) = i
 getSecurityParameter :: Header V3 -> SecurityParameter
 getSecurityParameter (V3Header _ _ _ _ i) = i
 
-getAuthoritiveEngineId :: Header V3 -> ByteString
-getAuthoritiveEngineId = authoritiveEngineId . getSecurityParameter
+getAuthoritativeEngineID :: Header V3 -> EngineID
+getAuthoritativeEngineID = authoritativeEngineID . getSecurityParameter
 
-getAuthoritiveEngineBoots :: Header V3 -> Int32
-getAuthoritiveEngineBoots = authoritiveEngineBoots . getSecurityParameter
+getAuthoritativeEngineBoots :: Header V3 -> EngineBoot
+getAuthoritativeEngineBoots = authoritativeEngineBoots . getSecurityParameter
 
-getAuthoritiveEngineTime :: Header V3 -> Int32
-getAuthoritiveEngineTime = authoritiveEngineTime . getSecurityParameter
+getAuthoritativeEngineTime :: Header V3 -> EngineTime
+getAuthoritativeEngineTime = authoritativeEngineTime . getSecurityParameter
 
-getUserName :: Header V3 -> ByteString
+getUserName :: Header V3 -> Login
 getUserName = userName . getSecurityParameter
 
-getAuthenticationParameters :: Header V3 -> ByteString
+getAuthenticationParameters :: Header V3 -> AuthenticationParameter
 getAuthenticationParameters = authenticationParameters . getSecurityParameter
 
-getPrivacyParameters :: Header V3 -> ByteString
+getPrivacyParameters :: Header V3 -> PrivacyParameter
 getPrivacyParameters = privacyParameters . getSecurityParameter
+
+getSuite :: PDU a -> Suite
+getSuite (PDU _ s) = s
+getSuite (ScopedPDU _ _ (PDU _ s)) = s
+getSuite _ = undefined
+
+getRid :: PDU a -> RequestID
+getRid (PDU (Request _ rid _ _) _) = rid
+getRid (ScopedPDU _ _ pdu) = getRid pdu
+getRid _ = undefined
+
+getRequest :: PDU a -> Request
+getRequest (PDU r _) = r
+getRequest (ScopedPDU _ _ (PDU r _)) = r
+getRequest _ = undefined
+
+getErrorStatus :: PDU a -> ErrorStatus
+getErrorStatus = getES . getRequest
+  where
+    getES (Request _ _ es _) = es
 
 getContextEngineID :: PDU V3 -> ContextEngineID
 getContextEngineID (ScopedPDU i _ _) = i
@@ -204,7 +221,7 @@ getContextName :: PDU V3 -> ContextName
 getContextName (ScopedPDU _ i _) = i
 getContextName _ = undefined
 
-setID :: ID -> Header V3 -> Header V3
+setID :: MessageID -> Header V3 -> Header V3
 setID i (V3Header _ a b c d) = V3Header i a b c d
 
 setMaxSize :: MaxSize -> Header V3 -> Header V3
@@ -219,28 +236,48 @@ setSecurityModel i (V3Header a b c _ d) = V3Header a b c i d
 setSecurityParameter :: SecurityParameter -> Header V3 -> Header V3
 setSecurityParameter i (V3Header a b c d _) = V3Header a b c d i
 
-setAuthoritiveEngineId :: ByteString -> Header V3 -> Header V3
-setAuthoritiveEngineId i (V3Header a b c d f) =
-    V3Header a b c d (f { authoritiveEngineId = i })
+setAuthoritativeEngineID :: EngineID -> Header V3 -> Header V3
+setAuthoritativeEngineID i (V3Header a b c d f) =
+    V3Header a b c d (f { authoritativeEngineID = i })
 
-setAuthoritiveEngineBoots :: Int32 -> Header V3 -> Header V3
-setAuthoritiveEngineBoots i (V3Header a b c d f) =
-    V3Header a b c d (f { authoritiveEngineBoots = i })
+setAuthoritativeEngineBoots :: EngineBoot -> Header V3 -> Header V3
+setAuthoritativeEngineBoots i (V3Header a b c d f) =
+    V3Header a b c d (f { authoritativeEngineBoots = i })
 
-setAuthoritiveEngineTime :: Int32 -> Header V3 -> Header V3
-setAuthoritiveEngineTime i (V3Header a b c d f) =
-    V3Header a b c d (f { authoritiveEngineTime = i })
+setAuthoritativeEngineTime :: EngineTime -> Header V3 -> Header V3
+setAuthoritativeEngineTime i (V3Header a b c d f) =
+    V3Header a b c d (f { authoritativeEngineTime = i })
 
-setUserName :: ByteString -> Header V3 -> Header V3
+setUserName :: Login -> Header V3 -> Header V3
 setUserName i (V3Header a b c d f) = V3Header a b c d (f { userName = i })
 
-setAuthenticationParameters :: ByteString -> Header V3 -> Header V3
+setAuthenticationParameters :: AuthenticationParameter -> Header V3 -> Header V3
 setAuthenticationParameters i (V3Header a b c d f) =
     V3Header a b c d (f { authenticationParameters = i })
 
-setPrivacyParameters :: ByteString -> Header V3 -> Header V3
+setPrivacyParameters :: PrivacyParameter -> Header V3 -> Header V3
 setPrivacyParameters i (V3Header a b c d f) =
     V3Header a b c d (f { privacyParameters = i })
+
+setSuite :: Suite -> PDU a -> PDU a
+setSuite s (PDU r _) = PDU r s
+setSuite s (ScopedPDU a b (PDU r _)) = ScopedPDU a b (PDU r s)
+setSuite _ _ = undefined
+
+setRid :: RequestID -> PDU a -> PDU a
+setRid rid (PDU (Request rt _ es ei) s) = PDU (Request rt rid es ei) s
+setRid rid (ScopedPDU a b (PDU (Request rt _ es ei) s)) = ScopedPDU a b (PDU (Request rt rid es ei) s)
+setRid _ _ = undefined
+
+setRequest :: Request -> PDU a -> PDU a
+setRequest r (PDU _ s) = PDU r s
+setRequest r (ScopedPDU a b (PDU _ s)) = ScopedPDU a b (PDU r s)
+setRequest _ _ = undefined
+
+setErrorStatus :: ErrorStatus -> PDU a -> PDU a
+setErrorStatus es (PDU (Request rt rid _ ei) s) = PDU (Request rt rid es ei) s
+setErrorStatus es (ScopedPDU a b (PDU (Request rt rid _ ei) s)) = ScopedPDU a b (PDU (Request rt rid es ei) s)
+setErrorStatus _ _ = undefined
 
 setContextEngineID :: ContextEngineID -> PDU V3 -> PDU V3
 setContextEngineID i (ScopedPDU _ b c) = ScopedPDU i b c
@@ -251,7 +288,7 @@ setContextName i (ScopedPDU a _ b) = ScopedPDU a i b
 setContextName _ _ = undefined
 
 ----------------------------------------------------------------------------------------
-setIDP :: ID -> Packet -> Packet
+setIDP :: MessageID -> Packet -> Packet
 setIDP x p =
     let header = getHeader p :: Header V3
         newHeader = setID x header
@@ -269,37 +306,31 @@ setCommunityP x p =
         newHeader = setCommunity x header
     in setHeader newHeader p
 
-getEngineIdP :: Packet -> EngineId
-getEngineIdP p =
-    let header = getHeader p :: Header V3
-    in getAuthoritiveEngineId header
+getEngineIDP :: Packet -> EngineID
+getEngineIDP = getAuthoritativeEngineID . getHeader
 
-setEngineIdP :: EngineId -> Packet -> Packet
-setEngineIdP x p =
+setEngineIDP :: EngineID -> Packet -> Packet
+setEngineIDP x p =
   let header = getHeader p :: Header V3
-      newHeader = setAuthoritiveEngineId x header
+      newHeader = setAuthoritativeEngineID x header
   in setHeader newHeader p
 
-getEngineBootsP :: Packet -> EngineBootId
-getEngineBootsP p =
-    let header = getHeader p :: Header V3
-    in getAuthoritiveEngineBoots header
+getEngineBootsP :: Packet -> EngineBoot
+getEngineBootsP = getAuthoritativeEngineBoots . getHeader
 
-setEngineBootsP :: EngineBootId -> Packet -> Packet
+setEngineBootsP :: EngineBoot -> Packet -> Packet
 setEngineBootsP x p =
     let header = getHeader p :: Header V3
-        newHeader = setAuthoritiveEngineBoots x header
+        newHeader = setAuthoritativeEngineBoots x header
     in setHeader newHeader p
 
-getEngineTimeP :: Packet -> Int32
-getEngineTimeP p =
-    let header = getHeader p :: Header V3
-    in getAuthoritiveEngineTime header
+getEngineTimeP :: Packet -> EngineTime
+getEngineTimeP = getAuthoritativeEngineTime . getHeader
 
-setEngineTimeP :: Int32 -> Packet -> Packet
+setEngineTimeP :: EngineTime -> Packet -> Packet
 setEngineTimeP x p =
     let header = getHeader p :: Header V3
-        newHeader = setAuthoritiveEngineTime x header
+        newHeader = setAuthoritativeEngineTime x header
     in setHeader newHeader p
 
 setReportableP :: Reportable -> Packet -> Packet
@@ -316,78 +347,66 @@ setPrivAuthP x p =
         newHeader = setFlag (Flag r x) header
     in setHeader newHeader p
 
-setUserNameP :: ByteString -> Packet -> Packet
+setUserNameP :: Login -> Packet -> Packet
 setUserNameP x p =
     let header = getHeader p :: Header V3
         sp = getSecurityParameter header
         newHeader = setSecurityParameter (sp { userName = x }) header
     in setHeader newHeader p
 
-setAuthenticationParametersP :: ByteString -> Packet -> Packet
+setAuthenticationParametersP :: AuthenticationParameter -> Packet -> Packet
 setAuthenticationParametersP x p =
     let header = getHeader p :: Header V3
         sp = getSecurityParameter header
         newHeader = setSecurityParameter (sp { authenticationParameters = x }) header
     in setHeader newHeader p
 
-getAuthenticationParametersP :: Packet -> ByteString
-getAuthenticationParametersP p =
-    let header = getHeader p :: Header V3
-    in authenticationParameters (getSecurityParameter header)
+getAuthenticationParametersP :: Packet -> AuthenticationParameter
+getAuthenticationParametersP = authenticationParameters . getSecurityParameter . getHeader
 
-setPrivParametersP :: ByteString -> Packet -> Packet
+setPrivParametersP :: PrivacyParameter -> Packet -> Packet
 setPrivParametersP x p =
     let header = getHeader p :: Header V3
         sp = getSecurityParameter header
         newHeader = setSecurityParameter (sp { privacyParameters = x }) header
     in setHeader newHeader p
 
-getPrivParametersP :: Packet -> ByteString
-getPrivParametersP p =
-    let header = getHeader p :: Header V3
-    in privacyParameters $ getSecurityParameter header
+getPrivParametersP :: Packet -> PrivacyParameter
+getPrivParametersP = privacyParameters . getSecurityParameter . getHeader
 
-getVersion :: Packet -> Version
-getVersion (V2Packet v _ _) = v
-getVersion (V3Packet v _ _) = v
+getVersionP :: Packet -> Version
+getVersionP (V2Packet v _ _) = v
+getVersionP (V3Packet v _ _) = v
 
-getRid :: Packet -> RequestId
-getRid (V2Packet _ _ (PDU r _)) = rid r
-getRid (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = rid r
-getRid _ = undefined
+getRidP :: Packet -> RequestID
+getRidP (V2Packet _ _ pdu) = getRid pdu
+getRidP (V3Packet _ _ pdu) = getRid pdu
 
-setRid :: RequestId -> Packet -> Packet
-setRid r (V2Packet v h (PDU req s)) = V2Packet v h (PDU req { rid = r } s)
-setRid r (V3Packet v h (ScopedPDU a b (PDU req s))) = V3Packet v h (ScopedPDU a b (PDU req { rid = r } s))
-setRid _ _ = undefined
+setRidP :: RequestID -> Packet -> Packet
+setRidP r (V2Packet v h pdu) = V2Packet v h $ setRid r pdu
+setRidP r (V3Packet v h pdu) = V3Packet v h $ setRid r pdu
 
-getErrorStatus :: Packet -> ErrorStatus
-getErrorStatus (V2Packet _ _ (PDU r _)) = es r
-getErrorStatus (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = es r
-getErrorStatus _ = undefined
+getErrorStatusP :: Packet -> ErrorStatus
+getErrorStatusP (V2Packet _ _ pdu) = getErrorStatus pdu
+getErrorStatusP (V3Packet _ _ pdu) = getErrorStatus pdu
 
-setErrorStatus :: ErrorStatus -> Packet -> Packet
-setErrorStatus e (V2Packet v h (PDU req s)) = V2Packet v h (PDU req { es = e } s)
-setErrorStatus e (V3Packet v h (ScopedPDU a b (PDU req s))) = V3Packet v h (ScopedPDU a b (PDU req { es = e } s))
-setErrorStatus _ _ = undefined
+setErrorStatusP :: ErrorStatus -> Packet -> Packet
+setErrorStatusP e (V2Packet v h pdu) = V2Packet v h $ setErrorStatus e pdu
+setErrorStatusP e (V3Packet v h pdu) = V3Packet v h $ setErrorStatus e pdu
 
-getSuite :: Packet -> Suite
-getSuite (V2Packet _ _ (PDU _ r)) = r
-getSuite (V3Packet _ _ (ScopedPDU _ _ (PDU _ r))) = r
-getSuite _ = undefined
+getSuiteP :: Packet -> Suite
+getSuiteP (V2Packet _ _ pdu) = getSuite pdu
+getSuiteP (V3Packet _ _ pdu) = getSuite pdu
 
-setSuite :: Suite -> Packet -> Packet
-setSuite s (V2Packet v h (PDU req _)) = V2Packet v h (PDU req s)
-setSuite s (V3Packet v h (ScopedPDU a b (PDU req _))) = V3Packet v h (ScopedPDU a b (PDU req s))
-setSuite _ _ = undefined
+setSuiteP :: Suite -> Packet -> Packet
+setSuiteP s (V2Packet v h pdu) = V2Packet v h $ setSuite s pdu
+setSuiteP s (V3Packet v h pdu) = V3Packet v h $ setSuite s pdu
 
-getRequest :: Packet -> Request
-getRequest (V2Packet _ _ (PDU r _)) = r
-getRequest (V3Packet _ _ (ScopedPDU _ _ (PDU r _))) = r
-getRequest _ = undefined
+getRequestP :: Packet -> Request
+getRequestP (V2Packet _ _ pdu) = getRequest pdu
+getRequestP (V3Packet _ _ pdu) = getRequest pdu
 
-setRequest :: Request -> Packet -> Packet
-setRequest req (V2Packet v h (PDU _ s)) = V2Packet v h (PDU req s)
-setRequest req (V3Packet v h (ScopedPDU a b (PDU _ s))) = V3Packet v h (ScopedPDU a b (PDU req s))
-setRequest _ _ = undefined
+setRequestP :: Request -> Packet -> Packet
+setRequestP req (V2Packet v h pdu) = V2Packet v h $ setRequest req pdu
+setRequestP req (V3Packet v h pdu) = V3Packet v h $ setRequest req pdu
 

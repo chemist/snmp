@@ -18,23 +18,26 @@ module Network.Protocol.Snmp.Types
     -- *** header snmpV2
     , Community(..)
     -- *** header snmpV3
-    , ID(..)
+    , MessageID(..)
     , MaxSize(..)
     , Flag(..)
     , ErrorIndex(..)
     , ErrorStatus(..)
-    , RequestId(..)
+    , RequestID(..)
     , SecurityModel(..)
     , SecurityParameter(..)
     , Reportable
+    , Login(..)
     , PrivAuth(..)
-    , EngineBootId
-    , PrivacyParameter
-    , EngineTime
-    , EngineId
+    , EngineBoot(..)
+    , PrivacyParameter(..)
+    , AuthenticationParameter(..)
+    , EngineTime(..)
+    , EngineID(..)
     -- ** PDU
     , PDU (..)
     -- *** PDU universal
+    , RequestType(..)
     , Request(..)
     , Suite(..)
     , Coupla(..)
@@ -96,7 +99,7 @@ data Packet where
 -- | Snmp header without version tag
 data Header a where
     V2Header :: Community -> Header V2
-    V3Header :: ID -> MaxSize -> Flag -> SecurityModel -> SecurityParameter -> Header V3
+    V3Header :: MessageID -> MaxSize -> Flag -> SecurityModel -> SecurityParameter -> Header V3
 
 deriving instance Show (Header a)
 deriving instance Eq (Header a)
@@ -111,7 +114,7 @@ deriving instance Show (PDU a)
 deriving instance Eq (PDU a)
 
 -- | Request id
-newtype RequestId = RequestId Int32
+newtype RequestID = RequestID Int32
   deriving (Show, Eq, Ord, Num, Bounded, Enum)
 
 -- | Error status
@@ -123,15 +126,18 @@ newtype ErrorIndex = ErrorIndex Int32
   deriving (Show, Eq, Ord, Num)
 
 -- | Request types
-data Request
-    = GetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-    | GetNextRequest { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-    | GetResponse    { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-    | SetRequest     { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-    | GetBulk        { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-    | Inform         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-    | V2Trap         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
-    | Report         { rid :: !RequestId, es :: !ErrorStatus, ei :: !ErrorIndex }
+data RequestType
+    = GetRequest
+    | GetNextRequest
+    | GetResponse
+    | SetRequest
+    | GetBulkRequest
+    | Inform
+    | V2Trap
+    | Report
+  deriving (Show, Eq, Ord, Enum)
+
+data Request = Request !RequestType !RequestID !ErrorStatus !ErrorIndex
   deriving (Show, Eq)
 
 -- | Coupla oid -> value
@@ -153,13 +159,13 @@ instance Eq Suite where
 newtype Community = Community ByteString
   deriving (Show, Eq)
 
--- | (snmp3 only) Message Identifier (like RequestId in PDU)
-newtype ID = ID Int32
-  deriving (Show, Eq, Ord)
+-- | (snmp3 only) Message Identifier (like RequestID in PDU)
+newtype MessageID = MessageID Int32
+  deriving (Show, Eq, Ord, Num)
 
 -- | (snmp3 only) Message max size must be > 484
 newtype MaxSize = MaxSize Int
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Num)
 
 -- | (snmp3 only) rfc3412, type for create message flag
 data PrivAuth = NoAuthNoPriv
@@ -178,14 +184,33 @@ data Flag = Flag !Reportable !PrivAuth
 data SecurityModel = UserBasedSecurityModel
   deriving (Show, Eq)
 
+newtype PrivacyParameter = PrivacyParameter ByteString
+  deriving (Show, Eq)
+
+newtype AuthenticationParameter = AuthenticationParameter ByteString
+  deriving (Show, Eq)
+
+newtype EngineID = EngineID ByteString
+  deriving (Show, Eq)
+
+newtype EngineTime = EngineTime Int32
+  deriving (Eq, Ord, Num, Bounded, Enum, Show)
+
+newtype EngineBoot = EngineBoot Int32
+  deriving (Eq, Ord, Num, Bounded, Enum, Show)
+
+-- | (snmp3 only) Security user name
+newtype Login = Login ByteString
+  deriving (Show, Eq)
+
 -- | (snmp3 only) rfc3412, security parameter
 data SecurityParameter = SecurityParameter
-    { authoritiveEngineId      :: !ByteString
-    , authoritiveEngineBoots   :: !Int32
-    , authoritiveEngineTime    :: !Int32
-    , userName                 :: !ByteString
-    , authenticationParameters :: !ByteString
-    , privacyParameters        :: !ByteString
+    { authoritativeEngineID    :: !EngineID
+    , authoritativeEngineBoots :: !EngineBoot
+    , authoritativeEngineTime  :: !EngineTime
+    , userName                 :: !Login
+    , authenticationParameters :: !AuthenticationParameter
+    , privacyParameters        :: !PrivacyParameter
     } deriving (Eq, Show)
 
 -- | (snmp3 only) rfc3412, types for ScopedPDU
@@ -202,9 +227,4 @@ newtype Tag = Tag Word8
 -- | ASN1 size
 newtype Size = Size Int
   deriving (Eq, Show)
-
-type PrivacyParameter = ByteString
-type EngineId = ByteString
-type EngineTime = Int32
-type EngineBootId = Int32
 

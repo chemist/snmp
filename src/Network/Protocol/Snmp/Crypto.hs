@@ -74,11 +74,11 @@ signPacket :: AuthType -> Key -> Packet -> Packet
 signPacket at (Key key) packet =
     let packetAsBin = encode packet
         sign = B.take 12 $ hmac at key packetAsBin
-    in setAuthenticationParametersP sign packet
+    in setAuthenticationParametersP (AuthenticationParameter sign) packet
 
 -- | create auth key from password and context engine id
-passwordToKey :: AuthType -> Password -> EngineId -> Key
-passwordToKey at (Password pass) eid =
+passwordToKey :: AuthType -> Password -> EngineID -> Key
+passwordToKey at (Password pass) (EngineID eid) =
   let buf = (BL.take 1048576 . BL.fromChunks . repeat) pass
       authKey = hashlazy at buf
   in Key $ hash at (authKey <> eid <> authKey)
@@ -89,11 +89,11 @@ type Raw = ByteString
 type Rand32 = Int32
 type Rand64 = Int64
 
-desEncrypt :: Key -> EngineBootId -> Rand32 -> Raw -> (Encrypted, Salt)
-desEncrypt (Key privKey) engineBoot localInt dataToEncrypt =
+desEncrypt :: Key -> EngineBoot -> Rand32 -> Raw -> (Encrypted, Salt)
+desEncrypt (Key privKey) (EngineBoot eb) localInt dataToEncrypt =
     let desKey = B.take 8 privKey
         preIV = B.drop 8 $ B.take 16 privKey
-        salt = toSalt engineBoot localInt
+        salt = toSalt eb localInt
         ivR = B.pack $ zipWith xor (B.unpack preIV) (B.unpack salt)
         Just iv = Priv.makeIV ivR :: Maybe (Priv.IV Priv.DES)
         -- Right key = Priv.makeKey desKey
@@ -102,11 +102,11 @@ desEncrypt (Key privKey) engineBoot localInt dataToEncrypt =
         tailB = B.replicate tailLen 0x00
     in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
 
-aesEncrypt :: Key -> EngineBootId -> EngineTime -> Rand64 -> Raw -> (Encrypted, Salt)
-aesEncrypt (Key privKey) engineBoot engineTime rcounter dataToEncrypt =
+aesEncrypt :: Key -> EngineBoot -> EngineTime -> Rand64 -> Raw -> (Encrypted, Salt)
+aesEncrypt (Key privKey) (EngineBoot eb) (EngineTime et) rcounter dataToEncrypt =
     let aesKey = B.take 16 privKey
         salt = wToBs rcounter
-        Just iv = Priv.makeIV $ toSalt engineBoot engineTime <> salt :: Maybe (Priv.IV Priv.AES128)
+        Just iv = Priv.makeIV $ toSalt eb et <> salt :: Maybe (Priv.IV Priv.AES128)
         -- Right key = Priv.makeKey aesKey
         Priv.CryptoPassed aes = Priv.cipherInit aesKey :: Priv.CryptoFailable Priv.AES128
     in (Priv.cfbEncrypt aes iv dataToEncrypt, salt)
@@ -146,10 +146,10 @@ desDecrypt (Key privKey) privParameters dataToDecrypt =
         Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
     in stripBS $ Priv.cbcDecrypt des iv dataToDecrypt
 
-aesDecrypt :: Key -> Salt -> EngineBootId -> EngineTime -> Encrypted -> Raw
-aesDecrypt (Key privKey) salt engineBoot engineTime dataToDecrypt =
+aesDecrypt :: Key -> Salt -> EngineBoot -> EngineTime -> Encrypted -> Raw
+aesDecrypt (Key privKey) salt (EngineBoot eb) (EngineTime et) dataToDecrypt =
     let aesKey = B.take 16 privKey
-        ivR = toSalt engineBoot engineTime <> salt
+        ivR = toSalt eb et <> salt
         Just iv = (Priv.makeIV ivR :: Maybe (Priv.IV Priv.AES128))
         -- Right key = Priv.makeKey aesKey
         Priv.CryptoPassed aes = Priv.cipherInit aesKey :: Priv.CryptoFailable Priv.AES128
