@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE RecordWildCards   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Network.Protocol.Snmp.Serialize
@@ -8,6 +9,15 @@ module Network.Protocol.Snmp.Serialize
     -- * encoding/decoding
       encode
     , decode
+
+    , putVarEncodingIntegral
+    , getVarEncodingIntegral
+
+    , putValue
+    , getValue
+
+    , putOid
+    , getOid
     ) where
 
 import           Control.Monad
@@ -405,21 +415,21 @@ instance Serialize (Header V3) where
     {-# INLINE get #-}
 
 instance Serialize RequestID where
-    put (RequestID rid) = putValue (Integer $ fromIntegral rid)
+    put (RequestID rid') = putValue (Integer $ fromIntegral rid')
     {-# INLINE put #-}
 
     get = RequestID <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize ErrorStatus where
-    put (ErrorStatus es) = putValue (Integer $ fromIntegral es)
+    put (ErrorStatus es') = putValue (Integer $ fromIntegral es')
     {-# INLINE put #-}
 
     get = ErrorStatus <$> getInteger
     {-# INLINE get #-}
 
 instance Serialize ErrorIndex where
-    put (ErrorIndex ei) = putValue (Integer $ fromIntegral ei)
+    put (ErrorIndex ei') = putValue (Integer $ fromIntegral ei')
     {-# INLINE put #-}
 
     get = ErrorIndex <$> getInteger
@@ -451,7 +461,7 @@ instance Serialize Coupla where
     {-# INLINE get #-}
 
 instance Serialize (PDU V2) where
-    put (PDU (Request rt rid es ei) suite) = do
+    put (PDU Request{..} suite) = do
         putTag $ toTag rt
         putNested putLength $ do
             put rid

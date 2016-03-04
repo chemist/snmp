@@ -22,6 +22,8 @@ module Network.Protocol.Snmp.Construct
     , getUserName
     , getAuthenticationParameters
     , getPrivacyParameters
+    , getRid
+    , getErrorStatus
     , getContextEngineID
     , getContextName
     , setID
@@ -35,6 +37,8 @@ module Network.Protocol.Snmp.Construct
     , setUserName
     , setAuthenticationParameters
     , setPrivacyParameters
+    , setRid
+    , setErrorStatus
     , setContextEngineID
     , setContextName
     -- *** create new Packet
@@ -108,6 +112,10 @@ instance Construct Suite where
 
 instance Construct Request where
     initial = Request GetRequest (RequestID 0) (ErrorStatus 0) (ErrorIndex 0)
+    {-# INLINE initial #-}
+
+instance Construct (RequestType -> Request) where
+    initial x = Request x (RequestID 0) (ErrorStatus 0) (ErrorIndex 0)
     {-# INLINE initial #-}
 
 ----------------------------------------------------------------------------------------
@@ -199,8 +207,8 @@ getSuite (ScopedPDU _ _ (PDU _ s)) = s
 getSuite _ = undefined
 
 getRid :: PDU a -> RequestID
-getRid (PDU (Request _ rid _ _) _) = rid
-getRid (ScopedPDU _ _ pdu) = getRid pdu
+getRid (PDU r _) = rid r
+getRid (ScopedPDU _ _ (PDU r _)) = rid r
 getRid _ = undefined
 
 getRequest :: PDU a -> Request
@@ -209,9 +217,7 @@ getRequest (ScopedPDU _ _ (PDU r _)) = r
 getRequest _ = undefined
 
 getErrorStatus :: PDU a -> ErrorStatus
-getErrorStatus = getES . getRequest
-  where
-    getES (Request _ _ es _) = es
+getErrorStatus = es . getRequest
 
 getContextEngineID :: PDU V3 -> ContextEngineID
 getContextEngineID (ScopedPDU i _ _) = i
@@ -265,8 +271,8 @@ setSuite s (ScopedPDU a b (PDU r _)) = ScopedPDU a b (PDU r s)
 setSuite _ _ = undefined
 
 setRid :: RequestID -> PDU a -> PDU a
-setRid rid (PDU (Request rt _ es ei) s) = PDU (Request rt rid es ei) s
-setRid rid (ScopedPDU a b (PDU (Request rt _ es ei) s)) = ScopedPDU a b (PDU (Request rt rid es ei) s)
+setRid rid' (PDU r s) = PDU r{rid = rid'} s
+setRid rid' (ScopedPDU a b (PDU r s)) = ScopedPDU a b (PDU r{rid = rid'} s)
 setRid _ _ = undefined
 
 setRequest :: Request -> PDU a -> PDU a
@@ -275,8 +281,8 @@ setRequest r (ScopedPDU a b (PDU _ s)) = ScopedPDU a b (PDU r s)
 setRequest _ _ = undefined
 
 setErrorStatus :: ErrorStatus -> PDU a -> PDU a
-setErrorStatus es (PDU (Request rt rid _ ei) s) = PDU (Request rt rid es ei) s
-setErrorStatus es (ScopedPDU a b (PDU (Request rt rid _ ei) s)) = ScopedPDU a b (PDU (Request rt rid es ei) s)
+setErrorStatus es' (PDU r s) = PDU r{es = es'} s
+setErrorStatus es' (ScopedPDU a b (PDU r s)) = ScopedPDU a b (PDU r{es = es'} s)
 setErrorStatus _ _ = undefined
 
 setContextEngineID :: ContextEngineID -> PDU V3 -> PDU V3

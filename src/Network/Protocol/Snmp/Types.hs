@@ -137,8 +137,12 @@ data RequestType
     | Report
   deriving (Show, Eq, Ord, Enum)
 
-data Request = Request !RequestType !RequestID !ErrorStatus !ErrorIndex
-  deriving (Show, Eq)
+data Request = Request
+    { rt  :: !RequestType
+    , rid :: !RequestID
+    , es  :: !ErrorStatus
+    , ei  :: !ErrorIndex
+    } deriving (Show, Eq)
 
 -- | Coupla oid -> value
 data Coupla = Coupla
