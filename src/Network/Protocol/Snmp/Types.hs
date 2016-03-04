@@ -88,7 +88,7 @@ data V3
 data Version = Version1
              | Version2
              | Version3
-  deriving (Eq, Show)
+  deriving (Eq, Enum, Show)
 
 -- | Top level type, which describe snmp packet
 data Packet where
@@ -119,11 +119,11 @@ newtype RequestID = RequestID Int32
 
 -- | Error status
 newtype ErrorStatus = ErrorStatus Int32
-  deriving (Show, Eq, Ord, Num)
+  deriving (Show, Eq, Ord, Num, Bounded, Enum)
 
 -- | Error index
 newtype ErrorIndex = ErrorIndex Int32
-  deriving (Show, Eq, Ord, Num)
+  deriving (Show, Eq, Ord, Num, Bounded, Enum)
 
 -- | Request types
 data RequestType
@@ -205,7 +205,7 @@ newtype EngineBoot = EngineBoot Int32
 
 -- | (snmp3 only) Security user name
 newtype Login = Login ByteString
-  deriving (Show, Eq)
+  deriving (Eq, Ord, Show)
 
 -- | (snmp3 only) rfc3412, security parameter
 data SecurityParameter = SecurityParameter
