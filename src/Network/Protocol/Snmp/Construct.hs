@@ -22,8 +22,10 @@ module Network.Protocol.Snmp.Construct
     , getUserName
     , getAuthenticationParameters
     , getPrivacyParameters
+    , getRequest
     , getRid
     , getErrorStatus
+    , getSuite
     , getContextEngineID
     , getContextName
     , setID
@@ -37,8 +39,10 @@ module Network.Protocol.Snmp.Construct
     , setUserName
     , setAuthenticationParameters
     , setPrivacyParameters
+    , setRequest
     , setRid
     , setErrorStatus
+    , setSuite
     , setContextEngineID
     , setContextName
     -- *** create new Packet

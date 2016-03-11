@@ -165,7 +165,7 @@ newtype Community = Community ByteString
 
 -- | (snmp3 only) Message Identifier (like RequestID in PDU)
 newtype MessageID = MessageID Int32
-  deriving (Show, Eq, Ord, Num)
+  deriving (Show, Eq, Ord, Num, Bounded, Enum)
 
 -- | (snmp3 only) Message max size must be > 484
 newtype MaxSize = MaxSize Int
