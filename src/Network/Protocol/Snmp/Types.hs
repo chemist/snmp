@@ -51,11 +51,15 @@ module Network.Protocol.Snmp.Types
 
 import           Data.ByteString (ByteString)
 import           Data.Int        (Int32)
-import           Data.List       (sort)
+import           Data.List       (intercalate, sort)
 import           Data.Word       (Word16, Word32, Word64, Word8)
 
 newtype Oid = Oid [Word16]
-  deriving (Eq, Ord, Monoid, Show)
+  deriving (Eq, Ord, Monoid)
+
+instance Show Oid where
+    show (Oid ls) = intercalate "." . map show $ ls
+    {-# INLINE show #-}
 
 data Value
     = Integer !Int32
