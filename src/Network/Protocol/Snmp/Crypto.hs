@@ -87,10 +87,10 @@ signPacket at (Key key) packet =
 
 -- | create auth key from password and context engine id
 passwordToKey :: AuthType -> Password -> EngineID -> Key
-passwordToKey at (Password pass) (EngineID eid) = Key $! hash at (authKey <> eid <> authKey)
+passwordToKey at (Password pass) (EngineID eid) = Key $ hash at (authKey <> eid <> authKey)
   where
     mkAuthKey = hashlazy at . BL.take 1048576 . BL.fromChunks . repeat
-    authKey = mkAuthKey pass
+    !authKey = mkAuthKey pass
 {-# INLINE passwordToKey #-}
 
 type Salt = ByteString
