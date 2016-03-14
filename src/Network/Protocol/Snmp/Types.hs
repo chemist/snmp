@@ -199,7 +199,7 @@ newtype AuthenticationParameter = AuthenticationParameter ByteString
   deriving (Show, Eq)
 
 newtype EngineID = EngineID ByteString
-  deriving (Show, Eq)
+  deriving (Eq, Ord, Show)
 
 newtype EngineTime = EngineTime Int32
   deriving (Eq, Ord, Num, Bounded, Enum, Show)
