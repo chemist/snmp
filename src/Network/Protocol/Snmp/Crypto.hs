@@ -62,9 +62,9 @@ cleanPass :: ByteString
 cleanPass = B.pack $ replicate 12 0x00
 {-# INLINE cleanPass #-}
 
-hash :: (BA.ByteArray a) => AuthType -> ByteString -> a
-hash MD5 bs = BA.convert (Hash.hash bs :: Hash.Digest Hash.MD5)
-hash SHA bs = BA.convert (Hash.hash bs :: Hash.Digest Hash.SHA1)
+hash :: AuthType -> ByteString -> ByteString
+hash MD5 = BA.convert . (Hash.hash :: ByteString -> Hash.Digest Hash.MD5)
+hash SHA = BA.convert . (Hash.hash :: ByteString -> Hash.Digest Hash.SHA1)
 {-# INLINE hash #-}
 
 hashlazy :: AuthType -> BL.ByteString -> ByteString
