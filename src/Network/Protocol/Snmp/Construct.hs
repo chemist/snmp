@@ -99,27 +99,59 @@ instance Construct (Header V2) where
     {-# INLINE initial #-}
 
 instance Construct (PDU V3) where
-    initial = ScopedPDU (ContextEngineID "") (ContextName "") initial
+    initial = ScopedPDU initial initial initial
     {-# INLINE initial #-}
 
 instance Construct (PDU V2) where
     initial = PDU initial initial
     {-# INLINE initial #-}
 
+instance Construct EngineID where
+    initial = EngineID ""
+    {-# INLINE initial #-}
+
+instance Construct ContextEngineID where
+    initial = ContextEngineID ""
+    {-# INLINE initial #-}
+
+instance Construct ContextName where
+    initial = ContextName ""
+    {-# INLINE initial #-}
+
+instance Construct AuthenticationParameter where
+    initial = AuthenticationParameter ""
+    {-# INLINE initial #-}
+
+instance Construct PrivacyParameter where
+    initial = PrivacyParameter ""
+    {-# INLINE initial #-}
+
 instance Construct SecurityParameter where
-    initial = SecurityParameter (EngineID "") 0 0 (Login "") (AuthenticationParameter "") (PrivacyParameter "")
+    initial = SecurityParameter initial 0 0 (Login "") initial initial
     {-# INLINE initial #-}
 
 instance Construct Suite where
     initial = Suite []
     {-# INLINE initial #-}
 
+instance Construct RequestID where
+    initial = RequestID 0
+    {-# INLINE initial #-}
+
+instance Construct ErrorStatus where
+    initial = ErrorStatus 0
+    {-# INLINE initial #-}
+
+instance Construct ErrorIndex where
+    initial = ErrorIndex 0
+    {-# INLINE initial #-}
+
 instance Construct Request where
-    initial = Request GetRequest (RequestID 0) (ErrorStatus 0) (ErrorIndex 0)
+    initial = Request GetRequest initial initial initial
     {-# INLINE initial #-}
 
 instance Construct (RequestType -> Request) where
-    initial x = Request x (RequestID 0) (ErrorStatus 0) (ErrorIndex 0)
+    initial x = Request x initial initial initial
     {-# INLINE initial #-}
 
 ----------------------------------------------------------------------------------------
