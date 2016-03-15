@@ -8,7 +8,9 @@ module Network.Protocol.Snmp.Crypto
     , Password(..)
     -- * authentication
     , passwordToKey
+    , mkSign
     , signPacket
+    , checkSign
     , cleanPass
     -- * priv
     , Salt
@@ -77,13 +79,24 @@ hmac MD5 key = BA.convert . (HMAC.hmac key :: ByteString -> HMAC.HMAC Hash.MD5)
 hmac SHA key = BA.convert . (HMAC.hmac key :: ByteString -> HMAC.HMAC Hash.SHA1)
 {-# INLINE hmac #-}
 
+mkSign :: AuthType -> Key -> ByteString -> ByteString
+mkSign at (Key key) = B.take 12 . hmac at key
+{-# INLINE mkSign #-}
+
 -- | (only V3) sign Packet
 signPacket :: AuthType -> Key -> Packet -> Packet
-signPacket at (Key key) packet =
+signPacket at key packet =
     setAuthenticationParametersP (mkAuthParam packet) packet
   where
-    mkAuthParam = AuthenticationParameter . B.take 12 . hmac at key . encode
+    mkAuthParam = AuthenticationParameter . mkSign at key . encode
 {-# INLINE signPacket #-}
+
+checkSign :: AuthType -> Key -> Packet -> Bool
+checkSign at key packet = mkSign at key raw == getAuth packet
+  where
+    raw = encode $ setAuthenticationParametersP initial packet
+    getAuth = (\(AuthenticationParameter x) -> x) . getAuthenticationParametersP
+{-# INLINE checkSign #-}
 
 -- | create auth key from password and context engine id
 passwordToKey :: AuthType -> Password -> EngineID -> Key
