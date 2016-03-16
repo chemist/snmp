@@ -94,8 +94,14 @@ uintOfBytes b = (B.length b, B.foldl' (\acc n -> (acc `shiftL` 8) + fromIntegral
 
 --bytesOfUInt i = B.unfoldr (\x -> if x == 0 then Nothing else Just (fromIntegral (x .&. 0xff), x `shiftR` 8)) i
 bytesOfUInt :: Int -> [Word8]
-bytesOfUInt x = reverse (list x)
+bytesOfUInt x
+  | x <= 255 = [fromIntegral x]
+  | x <= 255 * 255 = [ sh x 8, fromIntegral $ x .&. 255 ]
+  | x <= 255 * 255 * 255 = [ sh x 16, sh x 8, fromIntegral $ x .&. 255 ]
+  | otherwise = reverse (list x)
   where
+    sh :: Int -> Int -> Word8
+    sh a b = fromIntegral (shiftR a b)
     list i = if i <= 0xff
              then [fromIntegral i]
              else (fromIntegral i .&. 0xff) : list (i `shiftR` 8)
@@ -146,13 +152,23 @@ getVarEncodingIntegral = getWord8 >>= getBase128 0
 ----------------------------------------------------------------------------------------------------
 
 getSize :: Get Size
-getSize = toSize =<< fromIntegral <$> getWord8
-  where
-    toSize l
-        | testBit l 7 = Size . uintbs <$> getBytes (clearBit l 7)
-        | otherwise = return (Size l)
-    {- uintbs return the unsigned int represented by the bytes -}
-    uintbs = B.foldl' (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
+getSize = do
+    l1 <- fromIntegral <$> getWord8
+    case (testBit l1 7, clearBit l1 7) of
+         (False, _) -> return (Size l1)
+         (_, 1) -> Size . fromIntegral <$> getWord8
+         (_, 2) -> wordsToSize2 <$> getWord8 <*> getWord8
+         (_, 3) -> wordsToSize3 <$> getWord8 <*> getWord8 <*> getWord8
+         (_, 0) -> return (Size 0)
+         (_, len) -> Size . uintbs <$> getBytes len
+    where
+      wordsToSize2 :: Word8 -> Word8 -> Size
+      wordsToSize2 x y = Size $ (fromIntegral x `shiftL` 8) + (fromIntegral y :: Int)
+      wordsToSize3 :: Word8 -> Word8 -> Word8 -> Size
+      wordsToSize3 a b c = Size $ (fromIntegral a `shiftL` 16) + (fromIntegral b `shiftL` 8) + (fromIntegral c :: Int)
+      {- uintbs return the unsigned int represented by the bytes -}
+      uintbs = B.foldl' (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
+
 
 putSize :: Size -> Put
 putSize (Size i)
