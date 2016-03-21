@@ -29,7 +29,6 @@ import           Data.Int                    (Int32)
 import           Data.Serialize
 import           Data.Word                   (Word8)
 
-import           Debug.Trace
 import           Network.Protocol.Snmp.Types
 
 
@@ -327,11 +326,11 @@ instance Serialize MaxSize where
 instance Serialize Flag where
     put (Flag r pa) =
         let zero = zeroBits :: Word8
-            reportable = if r then setBit zero 0 else zero
+            reportable = if r then setBit zero 2 else zero
             privauth = case pa of
                            NoAuthNoPriv -> zero
-                           AuthNoPriv -> setBit zero 2
-                           AuthPriv -> setBit zero 1 .|. setBit zero 2
+                           AuthNoPriv -> setBit zero 0
+                           AuthPriv -> setBit zero 1 .|. setBit zero 0
             flag = reportable .|. privauth
          in putValue $ OctetString (B.pack [flag])
 
@@ -340,7 +339,7 @@ instance Serialize Flag where
         toFlag f
             | B.length f /= 1 = fail "10"
             | otherwise =
-                let [w] = trace (show (B.unpack f)) B.unpack f
+                let [w] = B.unpack f
                     reportable = testBit w 2
                  in case (testBit w 1, testBit w 0) of
                         (True, True) -> return $ Flag reportable AuthPriv
@@ -428,14 +427,7 @@ instance Serialize (Header V3) where
 
     get = do
         dropTag (Tag 0x30) 9
-        getNested getLength hh <*> get
-        where
-        hh = do
-            a <- get
-            b <- trace (show a) get
-            c <- trace (show b) get
-            d <- trace (show c) get
-            trace (show d) return $ V3Header a b c d
+        getNested getLength (V3Header <$> get <*> get <*> get <*> get) <*> get
     {-# INLINE get #-}
 
 instance Serialize RequestID where
